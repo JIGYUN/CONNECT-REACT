@@ -1,10 +1,10 @@
-/* filepath: src/app/features/ledger/api/queries.ts */
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@shared/core/apiClient';
 import { adaptInLedger } from '../adapters';
 import type { LedgerRow, LedgerCreate, LedgerDelete } from '../types';
+import { useOwnerIdValue } from '@shared/core/owner';   // ✅ 리액티브 구독
 
 const API = {
   list:   '/api/txn/ledger/selectLedgerList',
@@ -27,19 +27,25 @@ export const useLedgerListByDate = (params: {
   date?: string;
   fixedOnly?: boolean;
   grpCd?: string | null;
-  ownerId?: number;
+  ownerId?: number;                  // (선택) 외부 오버라이드
 }) => {
   const date = params.date ?? '';
   const fixedOnly = !!params.fixedOnly;
   const grpCd = params.grpCd ?? null;
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                 // ✅ store 구독
+  // ✅ 우선순위: store → param → default
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useQuery({
-    queryKey: ['ledgerList', date, fixedOnly, grpCd, ownerId],
-    enabled: !!date || fixedOnly,
+    queryKey: ['ledgerList', date, fixedOnly, grpCd, ownerId],     // ✅ ownerId 반영
+    enabled: (!!date || fixedOnly) && !!ownerId,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
     queryFn: async (): Promise<LedgerRow[]> => {
       const body = fixedOnly
-        ? { fixedOnly: true, grpCd, ownerId } // ✅ ownerId 포함
+        ? { fixedOnly: true, grpCd, ownerId }
         : {
             searchDate: date,
             ledgerDate: date,
@@ -48,7 +54,7 @@ export const useLedgerListByDate = (params: {
             from: date,
             to: date,
             grpCd,
-            ownerId,                             // ✅ ownerId 포함
+            ownerId,
           };
 
       const res0 = await apiClient.post(API.list, body);
@@ -74,7 +80,10 @@ export const useLedgerListByDate = (params: {
 /** 등록 */
 export const useInsertLedger = (params: { grpCd?: string | null; ownerId?: number }) => {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                 // ✅ store 구독
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useMutation({
     mutationFn: async (payload: LedgerCreate) => {
@@ -89,7 +98,7 @@ export const useInsertLedger = (params: { grpCd?: string | null; ownerId?: numbe
         ledgerDate: payload.ledgerDate ?? payload.txnDt,
         createDate: payload.createDate ?? payload.txnDt,
         grpCd: payload.grpCd ?? params.grpCd ?? null,
-        ownerId: payload.ownerId ?? ownerId,              // ✅ ownerId 강제 주입
+        ownerId: payload.ownerId ?? ownerId,               // ✅ 최신 ownerId 주입
       };
       const res0 = await apiClient.post(API.insert, body);
       const res  = unwrap(res0);
@@ -98,6 +107,7 @@ export const useInsertLedger = (params: { grpCd?: string | null; ownerId?: numbe
       return res?.result ?? res;
     },
     onSuccess: (_r, v) => {
+      // ownerId가 바뀌었을 때도 전부 갱신되도록 prefix 무효화
       qc.invalidateQueries({ queryKey: ['ledgerList'] });
       const d = (v as any)?.txnDt || (v as any)?.ledgerDate || (v as any)?.createDate;
       if (d) qc.invalidateQueries({ queryKey: ['ledgerList', d] as any });
@@ -108,11 +118,14 @@ export const useInsertLedger = (params: { grpCd?: string | null; ownerId?: numbe
 /** 삭제 */
 export const useDeleteLedger = (params: { ownerId?: number }) => {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                 // ✅ store 구독
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useMutation({
     mutationFn: async (payload: LedgerDelete) => {
-      const body = { txnId: payload.txnId, ownerId };    // ✅ ownerId 함께 전송
+      const body = { txnId: payload.txnId, ownerId };       // ✅ 함께 전송
       const res0 = await apiClient.post(API.remove, body);
       const res  = unwrap(res0);
       const { ok, msg } = normalizeOk(res);

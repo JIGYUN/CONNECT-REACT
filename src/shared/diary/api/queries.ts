@@ -5,8 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@shared/core/apiClient';
 import { adaptInDiary, adaptOutUpsert } from '../adapters';
 import type { DiaryEntry } from '../types';
+import { useOwnerIdValue } from '@shared/core/owner';   // ✅ 변경: 구독 훅 사용
 
-// 로그인 붙기 전 임시: ownerId 기본값을 1로
 const DEFAULT_OWNER_ID = Number(process.env.NEXT_PUBLIC_FAKE_OWNER_ID ?? '1');
 
 const API = {
@@ -14,7 +14,7 @@ const API = {
   upsert: '/api/tsk/diary/upsertDiary',
 };
 
-// Axios/Fetch 모두 대응
+// 공통 유틸
 function unwrap<T = any>(res: any): T {
   return res && typeof res === 'object' && 'data' in res ? (res.data as T) : (res as T);
 }
@@ -22,18 +22,21 @@ function normalizeOk(p: any) {
   return { ok: typeof p?.ok === 'boolean' ? p.ok : true, msg: p?.msg };
 }
 
-/** 단건 조회(날짜 기준) — ownerId 포함 */
+/** 단건 조회(날짜 기준) — ownerId 리액티브 반영 */
 export function useDiaryByDate(params: {
   diaryDt?: string;
   grpCd?: string | null;
-  ownerId?: number; // 기본 1
+  ownerId?: number;        // (선택) 강제 오버라이드
 }) {
   const diaryDt = params.diaryDt;
   const grpCd = params.grpCd ?? null;
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+  const ownerFromStore = useOwnerIdValue();             // ✅ 구독
+  const ownerId = Number(
+    params.ownerId ?? ownerFromStore ?? DEFAULT_OWNER_ID
+  );
 
   return useQuery({
-    queryKey: ['diary', diaryDt, grpCd, ownerId],
+    queryKey: ['diary', diaryDt, grpCd, ownerId],       // ✅ ownerId 바뀌면 re-fetch
     enabled: !!diaryDt,
     queryFn: async (): Promise<DiaryEntry | null> => {
       const body: any = { diaryDt, ownerId };
@@ -51,10 +54,13 @@ export function useDiaryByDate(params: {
   });
 }
 
-/** 업서트 — ownerId/ grpCd 포함 */
+/** 업서트 — ownerId/ grpCd 포함 (리액티브) */
 export function useUpsertDiary(params: { grpCd?: string | null; ownerId?: number }) {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+  const ownerFromStore = useOwnerIdValue();             // ✅ 구독
+  const ownerId = Number(
+    params.ownerId ?? ownerFromStore ?? DEFAULT_OWNER_ID
+  );
 
   return useMutation({
     mutationFn: async (input: { diaryDt: string; content: string }) => {

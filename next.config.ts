@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 /** @type {import('next').NextConfig} */
+const isExport = process.env.NEXT_OUTPUT === 'export';
 const nextConfig = {
-    output: 'export',
-    images: { unoptimized: true },    // Next Image 사용 시 필요
+  ...(isExport ? { output: 'export' } : {}), // dev는 기본 OFF
 };
 module.exports = nextConfig;
 

@@ -1,10 +1,10 @@
-/* filepath: src/app/features/task/api/queries.ts */
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@shared/core/apiClient';
 import { adaptInTask } from '../adapters';
 import type { Task, TaskCreate, TaskDelete, TaskToggle } from '../types';
+import { useOwnerIdValue } from '@shared/core/owner';     // ✅ 리액티브 구독
 
 const DEFAULT_OWNER_ID = Number(process.env.NEXT_PUBLIC_FAKE_OWNER_ID ?? '1');
 
@@ -15,6 +15,7 @@ const API = {
   remove:     '/api/tsk/task/deleteTask',
 };
 
+// 공통 유틸
 function unwrap<T = any>(res: any): T {
   return (res && typeof res === 'object' && 'data' in res) ? (res.data as T) : (res as T);
 }
@@ -25,11 +26,17 @@ function normalizeOk(p: any) {
 export function useTaskListByDate(params: { dueDate?: string; grpCd?: string | null; ownerId?: number }) {
   const dueDate = params.dueDate;
   const grpCd   = params.grpCd ?? null;
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                                   // ✅
+  // ✅ 우선순위: store → param → default
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useQuery({
-    queryKey: ['taskListByDate', dueDate, grpCd, ownerId],
-    enabled: !!dueDate,
+    queryKey: ['taskListByDate', dueDate, grpCd, ownerId],                    // ✅ ownerId 반영
+    enabled: !!dueDate && !!ownerId,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
     queryFn: async (): Promise<Task[]> => {
       const body: any = { dueDate, ownerId };
       if (grpCd) body.grpCd = grpCd;
@@ -56,7 +63,10 @@ export function useTaskListByDate(params: { dueDate?: string; grpCd?: string | n
 
 export function useInsertTask(params: { grpCd?: string | null; ownerId?: number }) {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                                   // ✅
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useMutation({
     mutationFn: async (payload: TaskCreate) => {
@@ -73,6 +83,7 @@ export function useInsertTask(params: { grpCd?: string | null; ownerId?: number 
       return res?.result ?? res;
     },
     onSuccess: (_r, v) => {
+      // ownerId 변동 시에도 안전하게 전체 무효화
       qc.invalidateQueries({ queryKey: ['taskListByDate'] });
       const d = (v as any)?.dueDate || (v as any)?.dueDt || (v as any)?.due_date;
       if (d) qc.invalidateQueries({ queryKey: ['taskListByDate', d] as any });
@@ -82,7 +93,10 @@ export function useInsertTask(params: { grpCd?: string | null; ownerId?: number 
 
 export function useToggleTask(params: { ownerId?: number }) {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                                   // ✅
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useMutation({
     mutationFn: async (payload: TaskToggle) => {
@@ -99,7 +113,10 @@ export function useToggleTask(params: { ownerId?: number }) {
 
 export function useDeleteTask(params: { ownerId?: number }) {
   const qc = useQueryClient();
-  const ownerId = params.ownerId ?? DEFAULT_OWNER_ID;
+
+  const ownerFromStore = useOwnerIdValue();                                   // ✅
+  const ownerId =
+    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
 
   return useMutation({
     mutationFn: async (payload: TaskDelete) => {
