@@ -1,11 +1,14 @@
 // filepath: src/app/login/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import RouteFallback from '@/shared/ui/RouteFallback';
 import { apiLogin } from '@/shared/core/auth/api';
 
-export default function LoginPage() {
+export const dynamic = 'force-dynamic';
+
+function LoginInner() {
   const sp = useSearchParams();
   const next = sp.get('next') || '/boardPost';
 
@@ -21,7 +24,7 @@ export default function LoginPage() {
     try {
       const r = await apiLogin(email, password);
       if (!r?.ok) throw new Error(r?.msg || '로그인 실패');
-      window.location.replace(next);      // 쿠키/상태 정착 후 이동
+      window.location.replace(next);
     } catch (err: any) {
       setError(err?.message ?? '로그인 실패');
     } finally {
@@ -37,16 +40,26 @@ export default function LoginPage() {
         <form onSubmit={onSubmit} style={{ display: 'grid', gap: 10 }}>
           <label>
             <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>이메일</div>
-            <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
-                   autoComplete="username" required
-                   style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}/>
+            <input
+              type="email"
+              value={email}
+              onChange={e=>setEmail(e.target.value)}
+              autoComplete="username"
+              required
+              style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}
+            />
           </label>
 
           <label>
             <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>비밀번호</div>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
-                   autoComplete="current-password" required
-                   style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}/>
+            <input
+              type="password"
+              value={password}
+              onChange={e=>setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}
+            />
           </label>
 
           {error && (
@@ -55,13 +68,26 @@ export default function LoginPage() {
             </div>
           )}
 
-          <button type="submit" disabled={submitting}
-                  style={{ height:42, borderRadius:8, background:'#111827', color:'#fff', fontWeight:700,
-                           border:'none', opacity: submitting ? .7 : 1 }}>
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              height:42, borderRadius:8, background:'#111827', color:'#fff', fontWeight:700,
+              border:'none', opacity: submitting ? .7 : 1
+            }}
+          >
             {submitting ? '로그인 중…' : '로그인'}
           </button>
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <LoginInner />
+    </Suspense>
   );
 }
