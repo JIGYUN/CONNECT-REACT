@@ -1,4 +1,4 @@
-/* filepath: src/app/diary/page.tsx */
+/* filepath: src/views/mobile/diary/page.tsx */
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';

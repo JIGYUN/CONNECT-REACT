@@ -1,4 +1,4 @@
-/* filepath: src/app/ledger/page.tsx */
+/* filepath: src/views/web/ledger/page.tsx */
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
