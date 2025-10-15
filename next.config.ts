@@ -1,10 +1,12 @@
-import type { NextConfig } from "next";
+// next.config.ts
+import type { NextConfig } from 'next';
 
-/** @type {import('next').NextConfig} */
-const isExport = process.env.NEXT_OUTPUT === 'export';
-const nextConfig = {
-  ...(isExport ? { output: 'export' } : {}), // dev는 기본 OFF
+/** Cloudflare Pages 정적 배포 기준 */
+// dev에서도 SSR 없이 개발 가능하도록 항상 export 고정
+const nextConfig: NextConfig = {
+  output: 'export',
+  images: { unoptimized: true },
 };
-module.exports = nextConfig;
 
+module.exports = nextConfig;
 export default nextConfig;

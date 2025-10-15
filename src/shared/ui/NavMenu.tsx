@@ -1,46 +1,48 @@
+// src/shared/ui/NavMenu.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';            // ✅ 추가
-import { setOwnerId, clearOwnerId } from '@/shared/core/owner';
+import { usePathname } from 'next/navigation';
+import { setOwnerId, clearOwnerId, useOwnerIdValue } from '@/shared/core/owner';
+import { apiMe, apiLogout } from '@/shared/core/auth/api';
 
 type ApiRes<T = any> = { ok: boolean; user?: any; msg?: string } & T;
 
 export default function NavMenu() {
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<{ ok: boolean; user?: any }>({ ok: false });
-  const pathname = usePathname();                          // ✅ 현재 경로
+  const pathname = usePathname();
+  const ownerId = useOwnerIdValue(); // ← LS/쿠키 기반 값 구독
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch('/login/api/me', { cache: 'no-store' });
-        const j: ApiRes = await r.json();
+        const j: ApiRes = await apiMe();           // 백엔드 me or fallback(ownerId)
         if (!alive) return;
 
-        const ok = r.ok && !!j?.ok;
-        const user = j?.user;
+        const ok = !!j?.ok || !!ownerId;
+        const user = j?.user ?? (ownerId ? { userId: ownerId } : undefined);
         setMe({ ok, user });
 
-        // ✅ 재로그인/계정 전환 시마다 ownerId를 최신으로 갱신
-        if (ok && user?.userId != null) setOwnerId(user.userId);
+        // 계정 전환/재로그인 시 반영
+        if (user?.userId != null) setOwnerId(user.userId);
       } catch {
         if (!alive) return;
-        setMe({ ok: false });
+        setMe({ ok: !!ownerId, user: ownerId ? { userId: ownerId } : undefined });
       }
     })();
     return () => { alive = false; };
-    // ✅ 경로가 바뀔 때마다 재조회 (로그인 → /ledger 이동 시 반영)
-  }, [pathname]);                                          // ✅ 변경
+  }, [pathname, ownerId]);
 
   const username =
-    (me.user?.name ?? me.user?.email ?? '').toString().trim() || '사용자';
+    (me.user?.name ?? me.user?.email ?? (me.user?.userId != null ? `USER#${me.user.userId}` : '')).toString().trim()
+    || '사용자';
 
   const logout = async () => {
-    try { await fetch('/login/api/logout', { method: 'POST' }); } catch {}
-    clearOwnerId();                                       // ✅ 쿠키/LS 싹 제거
+    try { await apiLogout(); } catch {}
+    clearOwnerId();
     setOpen(false);
     window.location.reload();
   };
@@ -80,7 +82,7 @@ export default function NavMenu() {
 
           <nav className="navmenu__nav" onClick={close}>
             <Link href="/boardPost"><span className="mi">•</span> 게시판</Link>
-            <Link href="/task"><span className="mi">•</span> 플래너</Link>
+            <Link href="/task"><span className="mi">•</span> 작업</Link>
             <Link href="/diary"><span className="mi">•</span> 다이어리</Link>
             <Link href="/ledger"><span className="mi">•</span> 가계부</Link>
           </nav>
