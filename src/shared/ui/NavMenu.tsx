@@ -1,24 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { setOwnerId, clearOwnerId, useOwnerIdValue } from '@/shared/core/owner';
 import { apiLogout } from '@/shared/core/auth/api';
+import useMounted from './useMounted';
 
 export default function NavMenu() {
+  const mounted = useMounted();                  // ★ 마운트 전엔 동일 마크업
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const ownerId = useOwnerIdValue();
-
-  // ownerId가 있으면 로그인으로 간주
-  const loggedIn = ownerId != null;
+  const loggedIn = mounted && ownerId != null;   // 마운트 후에만 판단
   const username = loggedIn ? `USER#${ownerId}` : '게스트';
 
-  useEffect(() => {
-    // (선택) 다른 페이지에서 ownerId가 생겼다면 반영
-    if (loggedIn) setOwnerId(Number(ownerId));
-  }, [pathname, loggedIn, ownerId]);
+  useEffect(() => { if (loggedIn) setOwnerId(Number(ownerId)); }, [pathname, loggedIn, ownerId]);
 
   const logout = async () => {
     try { await apiLogout(); } catch {}
@@ -27,13 +24,16 @@ export default function NavMenu() {
     window.location.reload();
   };
 
+  // 마운트 전에는 빈 컨테이너만 렌더 → 서버/클라이언트 동일
+  if (!mounted) return <div data-nav-placeholder="" />;
+
   return (
     <>
       <button type="button" aria-label="메뉴" onClick={() => setOpen(true)} className={`hamburger ${open ? 'is-open':''}`}>
         <span/><span/><span/>
       </button>
 
-      <div className={`navmenu ${open ? 'navmenu--open' : ''}`}>
+      <div className={`navmenu ${open ? 'navmenu--open' : ''}`} suppressHydrationWarning>
         <div className="navmenu__overlay" onClick={() => setOpen(false)} />
         <aside className="navmenu__sheet" aria-hidden={!open}>
           <div className="navmenu__head">
