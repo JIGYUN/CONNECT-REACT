@@ -2,11 +2,12 @@
   "name": "connect",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "export": "next export",
-    "cf:build": "next build && next export",
+    "cf:build": "npm rebuild lightningcss --force || true && next build && next export",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\""
