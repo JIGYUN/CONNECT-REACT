@@ -1,9 +1,7 @@
 /* ===========================
    Tailwind (쓰면 아래 3줄만 필요)
    =========================== */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 /* ❌ @import "tailwindcss"; <- 이 줄은 제거 */
 
 /* ===========================
