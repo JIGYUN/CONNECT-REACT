@@ -24,7 +24,7 @@ export default function NewPostPage() {
         }}
         onCancel={() => router.back()}
       />
-
+ 
       <style jsx>{`
         .page { padding: 16px; max-width: 960px; margin: 0 auto; }
         .title { font-weight: 700; font-size: 20px; margin: 0 0 12px; }
