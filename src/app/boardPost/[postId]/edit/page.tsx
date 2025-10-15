@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 import nextDynamic from 'next/dynamic';
 import { useIsMobile } from '@/shared/responsive';
 import RouteFallback from '@/shared/ui/RouteFallback';
-
+export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
 const MobileView = nextDynamic(() => import('@/views/mobile/boardPost/[postId]/edit/page'), {
