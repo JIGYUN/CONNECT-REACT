@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "export": "next export",
-    "cf:build": "npm rebuild lightningcss --force || true && next build && next export",
+    "cf:build": "npx @cloudflare/next-on-pages@latest",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\""
@@ -22,7 +21,7 @@
     "axios": "^1.7.4",
     "date-fns": "^4.1.0",
     "iron-session": "^8.0.4",
-    "next": "^15.5.2",
+    "next": "^15.5.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^4.5.5"
@@ -34,7 +33,7 @@
     "@types/react-dom": "^19.0.1",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.9.0",
-    "eslint-config-next": "^15.5.2",
+    "eslint-config-next": "^15.5.5",
     "lightningcss": "^1.30.2",
     "postcss": "^8.5.6",
     "prettier": "^3.3.2",
