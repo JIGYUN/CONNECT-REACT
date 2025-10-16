@@ -6,7 +6,7 @@ export type ApiRes<T = any> = { ok: boolean; result?: T; user?: any; msg?: strin
 
 // 로그인: 서버가 해시 처리하므로 평문을 passwordHash로 전달(기존 계약 가정)
 export async function apiLogin(email: string, password: string): Promise<ApiRes> {
-  const r = await postJson('/api/auth/selectLogin', { email, passwordHash: password });
+  const r = await postJson('/api/auth/selectLogin', { email, password: password });
   // 응답에서 사용자 식별자를 얻을 수 있으면 로컬에 저장(가드에서 사용)
   const userId =
     (r as any)?.result?.userId ??
