@@ -19,9 +19,8 @@ export default function NavMenu() {
 
   const logout = async () => {
     try { await apiLogout(); } catch {}
-    clearOwnerId();
     setOpen(false);
-    window.location.reload();
+    window.location.href = '/login'; // ✅ 새 세션 없이 로그인 화면으로
   };
 
   // 마운트 전에는 빈 컨테이너만 렌더 → 서버/클라이언트 동일
@@ -56,6 +55,7 @@ export default function NavMenu() {
             <Link href="/task"><span className="mi">•</span> 작업</Link>
             <Link href="/diary"><span className="mi">•</span> 다이어리</Link>
             <Link href="/ledger"><span className="mi">•</span> 가계부</Link>
+            <Link href="/coin"><span className="mi">•</span> 코인</Link>
           </nav>
 
           <div className="navmenu__actions">

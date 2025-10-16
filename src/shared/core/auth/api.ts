@@ -19,8 +19,9 @@ export async function apiLogin(email: string, password: string): Promise<ApiRes>
 
 // 로그아웃: 서버 엔드포인트 없으면 클라 상태만 정리
 export async function apiLogout(): Promise<ApiRes> {
-  try { await apiClient.post('/api/auth/logout'); } catch {}
-  clearOwnerId();
+  // ✅ 서버에서 httpOnly 쿠키(connect_session) 제거
+  try { await fetch('/api/auth/session', { method: 'DELETE' }); } catch {}
+  clearOwnerId(); // 로컬 상태 정리
   return { ok: true };
 }
 
