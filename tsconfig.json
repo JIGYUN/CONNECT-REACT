@@ -53,7 +53,6 @@
   "include": [
     "env.d.ts",
     "next-env.d.ts",
-    "open-next.config.ts",
     "src/**/*",
     ".next/types/**/*.ts"
   ],
