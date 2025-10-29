@@ -1,27 +1,30 @@
-/* filepath: src/app/features/task/types.ts */
+// filepath: src/shared/task/types.ts
+import type { Id } from '@/shared/types/common';
+
+export type TaskStatus = 'TODO' | 'DOING' | 'DONE';
+
 export type Task = {
   taskId: number;
   title: string | null;
-  statusCd: 'TODO' | 'DONE' | string;
-  dueDt?: string | null;      // 'YYYY-MM-DD HH:mm[:ss]' or ISO
-  grpCd?: string | null;
-  ownerId?: number | null;
+  statusCd: TaskStatus;
+  dueDt: string | null;
+  grpCd: string | null;
+  ownerId: number | null;
 };
 
 export type TaskCreate = {
   title: string;
-  dueDt: string;              // 'YYYY-MM-DDTHH:mm' or 'YYYY-MM-DD HH:mm'
+  dueDt?: string | null;
   grpCd?: string | null;
-  ownerId?: number;
+  /** 서버는 number만 허용하므로 Id가 와도 최종 전송은 number로 좁힌다 */
+  ownerId?: Id | null;
 };
 
 export type TaskToggle = {
-  taskId: number;
-  statusCd: 'TODO' | 'DONE';
-  ownerId?: number;
+  taskId: Id;
+  statusCd: TaskStatus;
 };
 
 export type TaskDelete = {
-  taskId: number;
-  ownerId?: number;
+  taskId: Id; // 호출부에서 number로 좁혀 전송
 };

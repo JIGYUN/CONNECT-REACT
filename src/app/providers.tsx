@@ -1,17 +1,10 @@
+// filepath: src/app/providers.tsx
 'use client';
 
-import React, { Suspense } from 'react';
-
+import * as React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-    const [client] = React.useState(() => new QueryClient());
-
-    return (
-        <QueryClientProvider client={client}>
-            <Suspense fallback={null}>
-            </Suspense>
-            {children}
-        </QueryClientProvider>
-    );
+  const [client] = React.useState(() => new QueryClient());
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

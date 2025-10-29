@@ -1,12 +1,7 @@
-/* ===========================
-   Tailwind (쓰면 아래 3줄만 필요)
-   =========================== */
+/* filepath: src/styles/globals.css */
 @import "tailwindcss";
-/* ❌ @import "tailwindcss"; <- 이 줄은 제거 */
+@custom-variant dark (&:where(.dark, .dark *));
 
-/* ===========================
-   공통 유틸
-   =========================== */
 .truncate {
     overflow: hidden;
     text-overflow: ellipsis;

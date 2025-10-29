@@ -1,22 +1,27 @@
 // filepath: src/middleware.ts
-import { NextResponse, NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
+// /login, /api, 정적 리소스는 보호 제외
 export const config = {
-    // /login, /api, 정적 에셋 등은 제외하고 보호
-    matcher: ['/((?!_next|favicon.ico|robots.txt|sitemap.xml|login|api).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|login|api).*)',
+  ],
 };
 
 export function middleware(req: NextRequest) {
-    // ✅ 세션 쿠키 존재만 확인
-    const hasSession = !!req.cookies.get('connect_session')?.value;
+  // ✅ 값 파싱하지 말고 존재만 판단
+  const hasSession = !!req.cookies.get('connect_session')?.value;
 
-    if (!hasSession) {
-        const url = req.nextUrl.clone();
-        url.pathname = '/login';
-        // 원래 목적지(쿼리 포함)로 되돌아갈 수 있도록 next 유지
-        url.searchParams.set('next', req.nextUrl.pathname + (req.nextUrl.search || ''));
-        return NextResponse.redirect(url);
-    }
+  // 개발 중 디버그용(필요 없으면 제거)
+  // console.log('[middleware] hasSession=', hasSession);
 
-    return NextResponse.next();
+  if (!hasSession) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/login';
+    url.searchParams.set('next', req.nextUrl.pathname + (req.nextUrl.search || ''));
+    return NextResponse.redirect(url);
+  }
+
+  return NextResponse.next();
 }

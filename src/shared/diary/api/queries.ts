@@ -1,86 +1,88 @@
-/* filepath: src/app/features/diary/api/queries.ts */
-'use client';
+// filepath: src/shared/diary/api/queries.ts
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { postJson } from '@/shared/core/apiClient';
+import type { DiaryEntry, DiaryUpsertInput } from '@/shared/diary/types';
+import { adaptInDiary } from '@/shared/diary/adapters';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import apiClient from '@shared/core/apiClient';
-import { adaptInDiary, adaptOutUpsert } from '../adapters';
-import type { DiaryEntry } from '../types';
-import { useOwnerIdValue } from '@shared/core/owner';   // ✅ 변경: 구독 훅 사용
+const isRec = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null;
 
-const DEFAULT_OWNER_ID = Number(process.env.NEXT_PUBLIC_FAKE_OWNER_ID ?? '1');
+const normGrp = (g?: string | null) => (g && g.trim() ? g : null);
+const normOwner = (o?: number | null) => (typeof o === 'number' && Number.isFinite(o) ? o : null);
+
+function keyByDate(diaryDt: string, grpCd?: string | null, ownerId?: number | null): QueryKey {
+    return ['diary/byDate', diaryDt, normGrp(grpCd), normOwner(ownerId)];
+}
+
+/** result/rows/list/단일객체 어떤 형태든 첫 레코드를 뽑아 DiaryEntry로 변환 */
+function extractDiary(v: unknown): DiaryEntry | null {
+    const unwrapList = (x: unknown): unknown => {
+        if (Array.isArray(x)) return x;
+        if (isRec(x) && Array.isArray(x['result'])) return x['result'];
+        if (isRec(x) && Array.isArray(x['rows']))   return x['rows'];
+        if (isRec(x) && Array.isArray(x['list']))   return x['list'];
+        return x;
+    };
+
+    let cur: unknown = v;
+    for (let i = 0; i < 5; i++) {
+        const list = unwrapList(cur);
+        if (Array.isArray(list)) return list.length ? adaptInDiary(list[0]) : null;
+        if (isRec(cur) && (isRec(cur['result']) || isRec(cur['data']) || isRec(cur['item']))) {
+            cur = (cur['result'] as unknown) || (cur['data'] as unknown) || (cur['item'] as unknown);
+            continue;
+        }
+        break;
+    }
+    return isRec(cur) ? adaptInDiary(cur) : null;
+}
 
 const API = {
-  select: '/api/tsk/diary/selectDiaryByDate',
-  upsert: '/api/tsk/diary/upsertDiary',
+    selectByDate: '/api/tsk/diary/selectDiaryByDate',
+    upsert:       '/api/tsk/diary/upsertDiary',
 };
 
-// 공통 유틸
-function unwrap<T = any>(res: any): T {
-  return res && typeof res === 'object' && 'data' in res ? (res.data as T) : (res as T);
-}
-function normalizeOk(p: any) {
-  return { ok: typeof p?.ok === 'boolean' ? p.ok : true, msg: p?.msg };
+async function getDiaryByDate(diaryDt: string, grpCd?: string | null, ownerId?: number | null): Promise<DiaryEntry | null> {
+    const payload = { diaryDt, grpCd: normGrp(grpCd), ownerId: normOwner(ownerId) };
+    const data = await postJson<unknown>(API.selectByDate, payload);
+    return extractDiary(data);
 }
 
-/** 단건 조회(날짜 기준) — ownerId 리액티브 반영 */
-export function useDiaryByDate(params: {
-  diaryDt?: string;
-  grpCd?: string | null;
-  ownerId?: number;        // (선택) 강제 오버라이드
-}) {
-  const diaryDt = params.diaryDt;
-  const grpCd = params.grpCd ?? null;
-  const ownerFromStore = useOwnerIdValue();             // ✅ 구독
-  const ownerId = Number(
-    params.ownerId ?? ownerFromStore ?? DEFAULT_OWNER_ID
-  );
+export function useDiaryByDate(p: { diaryDt: string; grpCd?: string | null; ownerId?: number | null }) {
+    const diaryDt = p.diaryDt;
+    const grpCd   = normGrp(p.grpCd ?? null);
+    const ownerId = normOwner(p.ownerId ?? null);
 
-  return useQuery({
-    queryKey: ['diary', diaryDt, grpCd, ownerId],       // ✅ ownerId 바뀌면 re-fetch
-    enabled: !!diaryDt,
-    queryFn: async (): Promise<DiaryEntry | null> => {
-      const body: any = { diaryDt, ownerId };
-      if (grpCd) body.grpCd = grpCd;
-
-      const res0 = await apiClient.post(API.select, body);
-      const res = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'selectDiaryByDate failed');
-
-      const raw = res?.result ?? res;
-      return raw ? adaptInDiary(raw) : null;
-    },
-    staleTime: 10_000,
-  });
+    return useQuery<DiaryEntry | null, Error>({
+        queryKey: keyByDate(diaryDt, grpCd, ownerId),
+        queryFn: () => getDiaryByDate(diaryDt, grpCd, ownerId),
+        enabled: !!diaryDt && ownerId !== null,
+        retry: 0,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        staleTime: 2_000,
+    });
 }
 
-/** 업서트 — ownerId/ grpCd 포함 (리액티브) */
-export function useUpsertDiary(params: { grpCd?: string | null; ownerId?: number }) {
-  const qc = useQueryClient();
-  const ownerFromStore = useOwnerIdValue();             // ✅ 구독
-  const ownerId = Number(
-    params.ownerId ?? ownerFromStore ?? DEFAULT_OWNER_ID
-  );
+export function useUpsertDiary(ctx: { grpCd?: string | null; ownerId?: number | null }) {
+    const qc = useQueryClient();
+    const grpCd   = normGrp(ctx.grpCd ?? null);
+    const ownerId = normOwner(ctx.ownerId ?? null);
 
-  return useMutation({
-    mutationFn: async (input: { diaryDt: string; content: string }) => {
-      const body = adaptOutUpsert({
-        diaryDt: input.diaryDt,
-        content: input.content,
-        ownerId,
-        grpCd: params.grpCd ?? null,
-      });
-
-      const res0 = await apiClient.post(API.upsert, body);
-      const res = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'upsertDiary failed');
-      return res?.result ?? res;
-    },
-    onSuccess: (_r, v) => {
-      qc.invalidateQueries({
-        queryKey: ['diary', (v as any)?.diaryDt, params.grpCd ?? null, ownerId],
-      });
-    },
-  });
+    return useMutation<void, Error, DiaryUpsertInput>({
+        mutationFn: async (input) => {
+            const body: DiaryUpsertInput = {
+                diaryDt: input.diaryDt,
+                content: input.content,
+                grpCd:   input.grpCd ?? grpCd ?? null,
+                ownerId: normOwner(input.ownerId ?? ownerId),
+            };
+            await postJson<unknown>(API.upsert, body);
+        },
+        onSuccess: (_d, v) => {
+            const keyDate = (v.diaryDt ?? '').slice(0, 10);
+            if (keyDate) qc.invalidateQueries({ queryKey: keyByDate(keyDate, grpCd, ownerId) });
+            else qc.invalidateQueries({ queryKey: ['diary/byDate'] });
+        },
+    });
 }

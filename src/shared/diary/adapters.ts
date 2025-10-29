@@ -1,35 +1,65 @@
-/* filepath: src/app/features/diary/adapters.ts */
-import type { DiaryEntry, DiaryUpsertReq } from './types';
+// filepath: src/shared/diary/adapters.ts
+import type { DiaryEntry } from '@/shared/diary/types';
 
-/** 서버 → 프론트 */
-export function adaptInDiary(row: any): DiaryEntry {
-  if (!row) return { diaryDt: '' };
+const isRec = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null;
 
-  const diaryDt =
-    row.diaryDt ?? row.DIARY_DT ?? row.diaryDate ?? row.DIARY_DATE ?? '';
+const pickStr = (o: Record<string, unknown>, ...keys: string[]): string | null => {
+    for (const k of keys) {
+        const v = o[k];
+        if (typeof v === 'string' && v.trim() !== '') return v;
+    }
+    return null;
+};
 
-  const contentHtml = row.contentHtml ?? row.CONTENT_HTML ?? undefined;
-  const content     = row.content     ?? row.CONTENT      ?? undefined;
+const pickNum = (o: Record<string, unknown>, ...keys: string[]): number | null => {
+    for (const k of keys) {
+        const v = o[k];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const n = typeof v === 'string' ? Number(v) : NaN;
+        if (Number.isFinite(n)) return n;
+    }
+    return null;
+};
 
-  const fileGrpId = row.fileGrpId ?? row.FILE_GRP_ID ?? null;
-  const grpCd     = row.grpCd     ?? row.GRP_CD      ?? null;
+/** 서버 응답 한 레코드를 표준 DiaryEntry로 어댑트 */
+export function adaptInDiary(row: unknown): DiaryEntry {
+    // result/data/item 래핑을 최대 5단계까지 벗겨낸다.
+    let cur: unknown = row;
+    for (let i = 0; i < 5; i++) {
+        if (!isRec(cur)) break;
+        const next = (isRec(cur['result']) && cur['result'])
+            || (isRec(cur['data']) && cur['data'])
+            || (isRec(cur['item']) && cur['item']);
+        if (next) { cur = next; continue; }
+        break;
+    }
+    const o = isRec(cur) ? cur : {};
 
-  return {
-    diaryDt: String(diaryDt || ''),
-    contentHtml: contentHtml ? String(contentHtml) : undefined,
-    content:     content     ? String(content)     : undefined,
-    fileGrpId: fileGrpId != null ? Number(fileGrpId) : null,
-    grpCd: grpCd ?? null,
-  };
+    const id      = pickNum(o, 'id', 'ID', 'diaryId', 'DIARY_ID');
+    const ymd     = pickStr(o, 'ymd', 'YMD', 'diaryDt', 'DIARY_DT') ?? '';
+    const ownerId = pickNum(o, 'ownerId', 'OWNER_ID');
+    const title   = pickStr(o, 'title', 'TITLE');
+    const body    = pickStr(o, 'body', 'BODY');
+    const content = pickStr(o, 'content', 'CONTENT');
+
+    return {
+        id: id ?? null,
+        ymd,
+        title,
+        body: body ?? content,
+        content,
+        ownerId: ownerId ?? null,
+    };
 }
 
-/** 프론트 → 서버 (업서트 바디) */
-export const adaptOutUpsert = (input: DiaryUpsertReq) => {
-  const body: any = {
-    diaryDt: input.diaryDt,
-    content: input.content,
-  };
-  if (input.ownerId != null) body.ownerId = input.ownerId;
-  if (input.grpCd) body.grpCd = input.grpCd;
-  return body;
-};
+/** 표준 → 서버 아웃바운드(대문자 키 호환) */
+export function adaptOutDiary(input: DiaryEntry): Record<string, unknown> {
+    return {
+        ID: input.id ?? null,
+        YMD: input.ymd,
+        TITLE: input.title ?? null,
+        BODY: input.body ?? input.content ?? null,
+        OWNER_ID: input.ownerId ?? null,
+    };
+}

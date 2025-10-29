@@ -1,41 +1,38 @@
-import '../styles/globals.css';
-import Providers from './providers';
-import NavMenu from '@/shared/ui/NavMenu';
+// filepath: src/app/layout.tsx
+import type { ReactNode } from 'react';
 import { Suspense } from 'react';
+import Link from 'next/link';
+
+import Providers from './providers';
+import '@/styles/globals.css';
+import NavMenu from '@/shared/ui/NavMenu';
+import SuspenseFallback from '@/shared/ui/SuspenseFallback';
 
 export const metadata = {
-    title: 'CONNECT',
-    description: 'CONNECT',
+  title: 'CONNECT',
+  description: 'CONNECT App',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-    return (
-        <html lang="ko">
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-            </head>
-            <body>
-                <Providers>
-                    {/* ✅ 헤더: 좌 햄버거 · 중앙 CONNECT · 우측 여유(대칭) */}
-                    <header className="app-header">
-                        <div className="app-header__inner">
-                            <Suspense fallback={null}>
-                                <NavMenu /> {/* 좌측: 햄버거 */}
-                            </Suspense>
-                            <a href="/" className="app-logo">CONNECT</a> {/* 중앙: 로고 */}
-                            <div className="app-header__spacer" /> {/* 우측: 대칭용 빈칸 */}
-                        </div>
-                    </header>
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="ko">
+      <body>
+        <Providers>
+          <header className="h-14 flex items-center justify-between px-4 border-b bg-white">
+            <Link href="/" className="font-semibold tracking-wide">
+              CONNECT
+            </Link>
+            <Suspense fallback={<div className="px-2"><div className="h-6 w-24 animate-pulse bg-gray-200 rounded" /></div>}>
+              <NavMenu />
+            </Suspense>
+          </header>
 
-                    <main className="app-main">{children}</main>
-
-                    <footer className="footer">
-                        <div className="footer__inner">
-                            <small>© {new Date().getFullYear()} CONNECT · v1</small>
-                        </div>
-                    </footer>
-                </Providers>
-            </body>
-        </html>
-    );
+          {/* ✅ 전역 Suspense: 라우트 스트리밍 안전장치 */}
+          <Suspense fallback={<SuspenseFallback label="로딩 중..." />}>
+            <main className="min-h-[calc(100vh-56px)]">{children}</main>
+          </Suspense>
+        </Providers>
+      </body>
+    </html>
+  );
 }

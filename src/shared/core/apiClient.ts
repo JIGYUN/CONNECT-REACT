@@ -1,52 +1,101 @@
-import axios, { AxiosRequestConfig } from 'axios';
-import { API_BASE, DEFAULT_GRP_CD, USE_ENVELOPE } from './config';
+// filepath: src/shared/core/apiClient.ts
+type Json = unknown;
 
-const apiClient = axios.create({
-    baseURL: API_BASE,
-    withCredentials: true,
-});
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
-// grpCd 자동 부착
-apiClient.interceptors.request.use((config) => {
-    const base = config.baseURL ?? "";
-    const raw = config.url ?? "";
-    const url = new URL(base + raw, "http://x");
-    if (!url.searchParams.get("grpCd") && DEFAULT_GRP_CD) {
-        url.searchParams.set("grpCd", DEFAULT_GRP_CD);
+function joinUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (!API_BASE) return url;
+  return `${API_BASE.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`;
+}
+
+function buildQS(params?: Record<string, unknown>): string {
+  if (!params) return '';
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    if (Array.isArray(v)) v.forEach((x) => x != null && usp.append(k, String(x)));
+    else usp.set(k, String(v));
+  }
+  return usp.toString();
+}
+
+async function parseJsonSafe(res: Response): Promise<Json> {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text;
+  }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function pickErrorMessage(obj: Record<string, unknown>): string | undefined {
+  const keys = ['message', 'error', 'msg', 'detail', 'reason'];
+  for (const k of keys) {
+    const val = obj[k];
+    if (typeof val === 'string' && val.trim()) return val;
+    if (isRecord(val)) {
+      const nested = pickErrorMessage(val);
+      if (nested) return nested;
     }
-    config.url = url.pathname + (url.search || "");
-    return config;
-}); 
+  }
+  return undefined;
+}
 
-// {msg,result,page?} → {ok:true,result,page?,msg} 로 평탄화
-apiClient.interceptors.response.use(
-    (res) => {
-        const data = res.data;
-        if (!USE_ENVELOPE) return data;
+function toErr(status: number, body: Json): string {
+  const base = `HTTP ${status}`;
+  if (typeof body === 'string' && body) return `${base} - ${body}`;
+  if (isRecord(body)) {
+    const m = pickErrorMessage(body);
+    if (m) return `${base} - ${m}`;
+  }
+  return base;
+}
 
-        if (data && typeof data === "object") {
-            if ("ok" in data && "result" in data) return data;
-            const out: any = {
-                ok: true,
-                result: "result" in data ? (data as any).result : data,
-                msg: "msg" in data ? (data as any).msg : null,
-            };
-            if ("page" in data) out.page = (data as any).page;
-            return out;
-        }
-        return { ok: true, result: data, msg: null };
-    },
-    (err) => {
-        const msg = err?.response?.data?.msg ?? err?.message ?? "Request failed";
-        return Promise.reject({ ok: false, result: null, msg });
-    }
-);
+export async function getJson<T = Json>(
+  url: string,
+  opts?: { params?: Record<string, unknown>; signal?: AbortSignal }
+): Promise<T> {
+  const qs = buildQS(opts?.params);
+  const href = joinUrl(qs ? `${url}${url.includes('?') ? '&' : '?'}${qs}` : url);
 
-// 편의 함수(선택)
-export const postJson = <T=any>(url: string, data?: any, cfg?: AxiosRequestConfig) =>
-    apiClient.post<any, { ok: boolean; result: T; msg?: string }>(url, data ?? {}, cfg);
+  const init: RequestInit = {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    credentials: 'include',
+    mode: 'cors',
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  };
 
-export const postForm = <T=any>(url: string, form: FormData, cfg?: AxiosRequestConfig) =>
-    apiClient.post<any, { ok: boolean; result: T; msg?: string }>(url, form, cfg);
+  const res = await fetch(href, init);
+  const body = await parseJsonSafe(res);
+  if (!res.ok) throw new Error(toErr(res.status, body));
+  return body as T;
+}
 
-export default apiClient;
+export async function postJson<T = Json>(
+  url: string,
+  body: unknown,
+  opts?: { signal?: AbortSignal }
+): Promise<T> {
+  const href = joinUrl(url);
+
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'include',
+    mode: 'cors',
+    body: JSON.stringify(body ?? {}),
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  };
+
+  const res = await fetch(href, init);
+  const data = await parseJsonSafe(res);
+  if (!res.ok) throw new Error(toErr(res.status, data));
+  return data as T;
+}

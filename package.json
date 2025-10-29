@@ -2,14 +2,17 @@
   "name": "connect",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "cf:build": "npx @cloudflare/next-on-pages@latest",
-    "start": "next start",
-    "lint": "next lint",
-    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\""
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\"",
+    "pages:build": "npx @cloudflare/next-on-pages@latest",
+    "pages:preview": "wrangler pages dev .vercel/output/static --compatibility-date=2024-10-01",
+    "pages:deploy": "wrangler pages deploy .vercel/output/static --project-name=connect-react"
+  },
+  "engines": {
+    "node": ">=20.10.0"
   },
   "dependencies": {
     "@ckeditor/ckeditor5-build-classic": "^41.4.2",
@@ -27,18 +30,25 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.38.0",
     "@tailwindcss/postcss": "^4.1.14",
-    "@types/node": "^20.14.10",
+    "@types/node": "^20.19.22",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.46.1",
+    "@typescript-eslint/parser": "^8.46.1",
     "autoprefixer": "^10.4.21",
-    "eslint": "^9.9.0",
+    "eslint": "^9.38.0",
     "eslint-config-next": "^15.5.5",
+    "eslint-plugin-jsonc": "^2.21.0",
+    "jsonc-eslint-parser": "^2.4.1",
     "lightningcss": "^1.30.2",
     "postcss": "^8.5.6",
     "prettier": "^3.3.2",
     "tailwindcss": "^4.1.12",
-    "typescript": "^5.5.4"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.1",
+    "wrangler": "^4.43.0"
   },
   "postcss": {
     "plugins": {

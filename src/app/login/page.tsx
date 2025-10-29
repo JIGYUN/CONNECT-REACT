@@ -1,124 +1,152 @@
 // filepath: src/app/login/page.tsx
 'use client';
 
-import { Suspense, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useState, useTransition } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import type { Route } from 'next';
 import RouteFallback from '@/shared/ui/RouteFallback';
-import { apiLogin } from '@/shared/core/auth/api';
+import { loginAndSetSession } from '@/shared/core/auth/actions';
+import { setOwnerId } from '@/shared/core/owner';
 
 export const dynamic = 'force-dynamic';
 
-async function setSessionOnServer(payload: { userId: number; email: string; name?: string | null }) {
-    const res = await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-        const t = await res.json().catch(() => ({}));
-        throw new Error(t?.msg || '세션 설정 실패');
-    }
-}
-
 function LoginInner() {
-    const sp = useSearchParams();
-    const next = sp.get('next') || '/boardPost';
+  const router = useRouter();
+  const sp = useSearchParams();
 
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  const dest = sp?.get('next');
+  const nextPath: Route = (dest && dest.startsWith('/') ? (dest as Route) : ('/boardPost' as Route));
 
-    const onSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setSubmitting(true);
-        try {
-            const r = await apiLogin(email, password);
-            if (!r?.ok) throw new Error(r?.msg || '로그인 실패');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
 
-            // 서버 응답에서 userId/name 추출(기존 계약 가정)
-            const userId =
-                (r as any)?.result?.userId ??
-                (r as any)?.user?.userId ??
-                (r as any)?.data?.userId ??
-                null;
-            const name =
-                (r as any)?.result?.name ??
-                (r as any)?.user?.name ??
-                (r as any)?.data?.name ??
-                null;
+  const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+    start(async () => {
+      const res = await loginAndSetSession({ email, password });
+      if (!res.ok) {
+        setError(res.msg || '로그인 실패');
+        return;
+      }
+      setOwnerId(res.userId);
+      document.cookie = 'ownerId=; Path=/; Max-Age=0; SameSite=Lax';
+      router.replace(nextPath);
+    });
+  };
 
-            if (userId == null) throw new Error('서버 응답에 userId가 없습니다');
+  // 상단 정렬: 헤더 높이를 고려해서 살짝 여백만 주고, 세로 가운데 정렬 제거
+  const HEADER_H = 56; // 헤더 높이(필요하면 조절)
+  return (
+    <div
+      style={{
+        background: '#f6f8fb',
+        minHeight: `calc(100dvh - ${HEADER_H}px)`,
+        paddingTop: 150,         // 원하는 만큼 올리고/내리기 → 수치만 조정
+        paddingBottom: 24,
+        paddingLeft: 16,
+        paddingRight: 16,
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start', // ⬅️ 위쪽 정렬
+      }}
+    >
+      <div
+        style={{
+          width: 340,
+          background: '#fff',
+          border: '1px solid #e5e7eb',
+          borderRadius: 12,
+          padding: 20,
+          boxShadow: '0 6px 24px rgba(0,0,0,.06)',
+        }}
+      >
+        <h1 style={{ fontSize: 20, fontWeight: 700, margin: '6px 4px 14px' }}>CONNECT 로그인</h1>
 
-            // ✅ Next 서버 쿠키 굽기
-            await setSessionOnServer({ userId: Number(userId), email, name });
+        <form onSubmit={onSubmit} style={{ display: 'grid', gap: 10 }}>
+          <label>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>이메일</div>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+              style={{
+                width: '100%',
+                height: 40,
+                border: '1px solid #e5e7eb',
+                borderRadius: 8,
+                padding: '0 10px',
+              }}
+            />
+          </label>
 
-            // 보호 페이지로 이동
-            window.location.replace(next);
-        } catch (err: any) {
-            setError(err?.message ?? '로그인 실패');
-        } finally {
-            setSubmitting(false);
-        }
-    };
+          <label>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>비밀번호</div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              style={{
+                width: '100%',
+                height: 40,
+                border: '1px solid #e5e7eb',
+                borderRadius: 8,
+                padding: '0 10px',
+              }}
+            />
+          </label>
 
-    return (
-        <div style={{ display:'grid', placeItems:'center', minHeight:'100dvh', background:'#f6f8fb' }}>
-            <div style={{ width:340, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:20, boxShadow:'0 6px 24px rgba(0,0,0,.06)' }}>
-                <h1 style={{ fontSize:20, fontWeight:700, margin:'6px 4px 14px'}}>CONNECT 로그인</h1>
-
-                <form onSubmit={onSubmit} style={{ display: 'grid', gap: 10 }}>
-                    <label>
-                        <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>이메일</div>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={e=>setEmail(e.target.value)}
-                            autoComplete="username"
-                            required
-                            style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}
-                        />
-                    </label>
-
-                    <label>
-                        <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>비밀번호</div>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={e=>setPassword(e.target.value)}
-                            autoComplete="current-password"
-                            required
-                            style={{ width:'100%', height:40, border:'1px solid #e5e7eb', borderRadius:8, padding:'0 10px' }}
-                        />
-                    </label>
-
-                    {error && (
-                        <div style={{ color:'#b91c1c', background:'#fee2e2', border:'1px solid #fecaca', borderRadius:8, padding:8 }}>
-                            {error}
-                        </div>
-                    )}
-
-                    <button
-                        type="submit"
-                        disabled={submitting}
-                        style={{
-                            height:42, borderRadius:8, background:'#111827', color:'#fff', fontWeight:700,
-                            border:'none', opacity: submitting ? .7 : 1
-                        }}
-                    >
-                        {submitting ? '로그인 중…' : '로그인'}
-                    </button>
-                </form>
+          {error && (
+            <div
+              style={{
+                color: '#b91c1c',
+                background: '#fee2e2',
+                border: '1px solid #fecaca',
+                borderRadius: 8,
+                padding: 8,
+              }}
+            >
+              {error}
             </div>
-        </div>
-    );
+          )}
+
+          <button
+            type="submit"
+            disabled={pending}
+            style={{
+              height: 42,
+              borderRadius: 8,
+              background: '#111827',
+              color: '#fff',
+              fontWeight: 700,
+              border: 'none',
+              opacity: pending ? 0.7 : 1,
+              // 텍스트 정확히 중앙 정렬
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              lineHeight: 1,
+            }}
+          >
+            {pending ? '로그인 중…' : '로그인'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 export default function LoginPage() {
-    return (
-        <Suspense fallback={<RouteFallback />}>
-            <LoginInner />
-        </Suspense>
-    );
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <LoginInner />
+    </Suspense>
+  );
 }

@@ -1,5 +1,5 @@
-/* filepath: src/app/features/diary/index.ts */
-'use client';                          // 🔴 이 줄 추가!
+// filepath: src/shared/diary/index.ts
+'use client';
 
 export * from './types';
 export * from './adapters';

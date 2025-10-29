@@ -1,12 +1,8 @@
-// 4-space indent
+// filepath: src/shared/core/config.ts
 export const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE
-    ?? process.env.NEXT_PUBLIC_API_URL
-    ?? "http://localhost:8080";
+  process.env.NEXT_PUBLIC_API_BASE ??
+  // 로컬 백엔드 기본값(필요시 수정)
+  'http://localhost:8080';
 
 export const DEFAULT_GRP_CD =
-    process.env.NEXT_PUBLIC_GRP_CD ?? "sikyung";
-
-// 서버가 { ok, result } 래핑을 쓰지 않는 경우를 대비해 스위치
-export const USE_ENVELOPE =
-    (process.env.NEXT_PUBLIC_USE_ENVELOPE ?? "true") === "true";
+  process.env.NEXT_PUBLIC_GRP_CD ?? 'sikyung';

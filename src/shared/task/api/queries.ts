@@ -1,142 +1,240 @@
-'use client';
-
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import apiClient from '@shared/core/apiClient';
+// filepath: src/shared/task/api/queries.ts
+import {
+    useQuery,
+    useMutation,
+    useQueryClient,
+    type QueryKey,
+} from '@tanstack/react-query';
+import { getJson, postJson } from '@/shared/core/apiClient';
 import { adaptInTask } from '../adapters';
+import type { AnyRecord } from '@/shared/types/common';
 import type { Task, TaskCreate, TaskDelete, TaskToggle } from '../types';
-import { useOwnerIdValue } from '@shared/core/owner';     // ✅ 리액티브 구독
 
-const DEFAULT_OWNER_ID = Number(process.env.NEXT_PUBLIC_FAKE_OWNER_ID ?? '1');
+/* ───────────────────────── 공통 유틸 ───────────────────────── */
 
-const API = {
-  listByDate: '/api/tsk/task/selectTaskListByDate',
-  insert:     '/api/tsk/task/insertTask',
-  toggle:     '/api/tsk/task/toggleTask',
-  remove:     '/api/tsk/task/deleteTask',
+function arrFrom(v: unknown): AnyRecord[] {
+    if (Array.isArray(v)) return v as AnyRecord[];
+    if (!v || typeof v !== 'object') return [];
+    const o = v as Record<string, unknown>;
+    return (
+        (Array.isArray(o['result']) && (o['result'] as AnyRecord[])) ||
+        (Array.isArray(o['rows']) && (o['rows'] as AnyRecord[])) ||
+        (Array.isArray(o['list']) && (o['list'] as AnyRecord[])) ||
+        []
+    );
+}
+
+function keyByDate(dueDate: string, grpCd: string | null, ownerId: number | null): QueryKey {
+    return ['task/byDate', dueDate, grpCd ?? null, ownerId ?? null];
+}
+
+/* ───────────────────────── 호출 최적화(폴백 1회→캐시) ───────────────────────── */
+
+const FORCE_BASE = (process.env['NEXT_PUBLIC_TASK_API_BASE'] ?? '').trim();
+const FORCE_METHOD = (process.env['NEXT_PUBLIC_TASK_API_METHOD'] ?? '')
+    .trim()
+    .toUpperCase() as '' | 'GET' | 'POST';
+
+type HttpMethod = 'GET' | 'POST';
+type Attempt<T> = { run: () => Promise<T>; url: string; method: HttpMethod };
+
+const okMemo = new Map<string, number>();
+const LS_KEY_PREFIX = 'task.api.pick.';
+
+function join(base: string, path: string) {
+    return base.replace(/\/$/, '') + '/' + path.replace(/^\//, '');
+}
+
+function GET<T>(url: string, params: Record<string, unknown>): Attempt<T> {
+    return { url, method: 'GET', run: () => getJson<T>(url, { params }) };
+}
+function POST<T>(url: string, body: unknown): Attempt<T> {
+    return { url, method: 'POST', run: () => postJson<T>(url, body) };
+}
+
+function loadPick(label: string): number | null {
+    try {
+        if (typeof window === 'undefined') return null;
+        const v = window.localStorage.getItem(LS_KEY_PREFIX + label);
+        return v ? Number(v) : null;
+    } catch { return null; }
+}
+function savePick(label: string, idx: number) {
+    try {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem(LS_KEY_PREFIX + label, String(idx));
+    } catch {}
+}
+
+async function firstOkCached<T>(label: string, attempts: Array<Attempt<T>>): Promise<T> {
+    if (attempts.length === 0) throw new Error('No attempts');
+
+    if (FORCE_BASE) {
+        for (const a of attempts) {
+            if (!a.url.startsWith(FORCE_BASE)) continue;
+            if (FORCE_METHOD && a.method !== FORCE_METHOD) continue;
+            return await a.run();
+        }
+        return await attempts[0]!.run();
+    }
+
+    const mem = okMemo.get(label);
+    if (mem != null) {
+        const a = attempts[mem];
+        if (a) {
+            try { return await a.run(); } catch { /* fallback */ }
+        }
+    }
+
+    const ls = loadPick(label);
+    if (ls != null) {
+        const a = attempts[ls];
+        if (a) {
+            try {
+                const res = await a.run();
+                okMemo.set(label, ls);
+                return res;
+            } catch { /* fallback */ }
+        }
+    }
+
+    let lastErr: unknown;
+    for (let i = 0; i < attempts.length; i++) {
+        const a = attempts[i];
+        if (!a) continue;
+        try {
+            const res = await a.run();
+            okMemo.set(label, i);
+            savePick(label, i);
+            return res;
+        } catch (e) { lastErr = e; }
+    }
+    throw (lastErr instanceof Error ? lastErr : new Error('Request failed'));
+}
+
+/* ───────────────────────── 목록 ───────────────────────── */
+
+export function useTaskListByDate(p: { dueDate: string; grpCd?: string | null; ownerId?: number }) {
+    const dueDate = p.dueDate;
+    const grpCd = p.grpCd ?? null;
+    const ownerId = p.ownerId ?? null;
+
+    return useQuery<Task[]>({
+        queryKey: keyByDate(dueDate, grpCd, ownerId),
+        queryFn: async (): Promise<Task[]> => {
+            const params: Record<string, unknown> = { dueDate, date: dueDate, ymd: dueDate };
+            if (grpCd) params['grpCd'] = grpCd;
+            if (ownerId != null) params['ownerId'] = ownerId;
+
+            const raw = await firstOkCached<unknown>('task.selectTaskListByDate', [
+                GET<unknown>(join('/api/task', 'selectTaskListByDate'), params),
+                GET<unknown>(join('/api/tsk/task', 'selectTaskListByDate'), params),
+                POST<unknown>(join('/api/task', 'selectTaskListByDate'), params),
+                POST<unknown>(join('/api/tsk/task', 'selectTaskListByDate'), params),
+            ]);
+
+            return arrFrom(raw).map(adaptInTask);
+        },
+        staleTime: 2_000,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        retry: 0,
+    });
+}
+
+/* ───────────────────────── 등록 ───────────────────────── */
+
+type InsertBody = {
+    title: string;
+    dueDt?: string | null;
+    grpCd?: string | null;
+    ownerId?: number;
 };
 
-// 공통 유틸
-function unwrap<T = any>(res: any): T {
-  return (res && typeof res === 'object' && 'data' in res) ? (res.data as T) : (res as T);
-}
-function normalizeOk(p: any) {
-  return { ok: typeof p?.ok === 'boolean' ? p.ok : true, msg: p?.msg };
-}
+export function useInsertTask(ctx: { grpCd?: string | null; ownerId?: number }) {
+    const qc = useQueryClient();
+    const grpCdFromCtx = ctx.grpCd ?? null;
+    const ownerIdFromCtx = ctx.ownerId ?? null;
 
-export function useTaskListByDate(params: { dueDate?: string; grpCd?: string | null; ownerId?: number }) {
-  const dueDate = params.dueDate;
-  const grpCd   = params.grpCd ?? null;
+    return useMutation<void, Error, TaskCreate>({
+        async mutationFn({ title, dueDt, grpCd, ownerId }: TaskCreate): Promise<void> {
+            if (typeof title !== 'string' || title.trim() === '') throw new Error('title required');
 
-  const ownerFromStore = useOwnerIdValue();                                   // ✅
-  // ✅ 우선순위: store → param → default
-  const ownerId =
-    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
+            const body: InsertBody = { title };
 
-  return useQuery({
-    queryKey: ['taskListByDate', dueDate, grpCd, ownerId],                    // ✅ ownerId 반영
-    enabled: !!dueDate && !!ownerId,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: false,
-    queryFn: async (): Promise<Task[]> => {
-      const body: any = { dueDate, ownerId };
-      if (grpCd) body.grpCd = grpCd;
+            if (typeof dueDt === 'string' && dueDt) body.dueDt = dueDt;
+            else body.dueDt = null;
 
-      const res0 = await apiClient.post(API.listByDate, body);
-      const res  = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'selectTaskListByDate failed');
+            if (typeof grpCd === 'string') body.grpCd = grpCd;
+            else if (grpCdFromCtx !== null) body.grpCd = grpCdFromCtx;
 
-      const raw =
-        res?.result?.list ??
-        res?.result?.rows ??
-        res?.result?.data ??
-        (Array.isArray(res?.result) ? res.result : undefined) ??
-        res?.data ??
-        res;
+            if (typeof ownerId === 'number') body.ownerId = ownerId;
+            else if (ownerIdFromCtx !== null) body.ownerId = ownerIdFromCtx;
 
-      const arr: any[] = Array.isArray(raw) ? raw : [];
-      return arr.map(adaptInTask).sort((a, b) => (toMillis(a.dueDt) - toMillis(b.dueDt)));
-    },
-    staleTime: 10_000,
-  });
+            await firstOkCached<void>('task.insertTask', [
+                POST<void>(join('/api/tsk/task', 'insertTask'), body),
+            ]);
+        },
+        onSuccess: () => { qc.invalidateQueries({ queryKey: ['task/byDate'] }); },
+    });
 }
 
-export function useInsertTask(params: { grpCd?: string | null; ownerId?: number }) {
-  const qc = useQueryClient();
+/* ───────────────────────── 상태 토글 ───────────────────────── */
 
-  const ownerFromStore = useOwnerIdValue();                                   // ✅
-  const ownerId =
-    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
+type ToggleBody = {
+    taskId: number;
+    statusCd: string;
+    ownerId?: number;
+};
 
-  return useMutation({
-    mutationFn: async (payload: TaskCreate) => {
-      const body: any = {
-        title: payload.title,
-        dueDt: payload.dueDt,
-        grpCd: (payload.grpCd ?? params.grpCd) ?? null,
-        ownerId,
-      };
-      const res0 = await apiClient.post(API.insert, body);
-      const res  = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'insertTask failed');
-      return res?.result ?? res;
-    },
-    onSuccess: (_r, v) => {
-      // ownerId 변동 시에도 안전하게 전체 무효화
-      qc.invalidateQueries({ queryKey: ['taskListByDate'] });
-      const d = (v as any)?.dueDate || (v as any)?.dueDt || (v as any)?.due_date;
-      if (d) qc.invalidateQueries({ queryKey: ['taskListByDate', d] as any });
-    },
-  });
+export function useToggleTask(ctx: { ownerId?: number }) {
+    const qc = useQueryClient();
+    const ownerIdFromCtx = ctx.ownerId ?? null;
+
+    return useMutation<void, Error, TaskToggle>({
+        async mutationFn({ taskId, statusCd }: TaskToggle): Promise<void> {
+            const id =
+                typeof taskId === 'number' ? taskId
+                    : (() => { throw new Error('taskId required(number)'); })();
+
+            if (typeof statusCd !== 'string' || !statusCd) throw new Error('statusCd required');
+
+            const body: ToggleBody = { taskId: id, statusCd };
+            if (ownerIdFromCtx !== null) body.ownerId = ownerIdFromCtx;
+
+            await firstOkCached<void>('task.toggleTask', [
+                POST<void>(join('/api/tsk/task', 'toggleTask'), body),
+                POST<void>(join('/api/tsk/task', 'updateTaskStatus'), body),
+            ]);
+        },
+        onSuccess: () => { qc.invalidateQueries({ queryKey: ['task/byDate'] }); },
+    });
 }
 
-export function useToggleTask(params: { ownerId?: number }) {
-  const qc = useQueryClient();
+/* ───────────────────────── 삭제 ───────────────────────── */
 
-  const ownerFromStore = useOwnerIdValue();                                   // ✅
-  const ownerId =
-    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
+type DeleteBody = {
+    taskId: number;
+    ownerId?: number;
+};
 
-  return useMutation({
-    mutationFn: async (payload: TaskToggle) => {
-      const body = { taskId: payload.taskId, statusCd: payload.statusCd, ownerId };
-      const res0 = await apiClient.post(API.toggle, body);
-      const res  = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'toggleTask failed');
-      return res?.result ?? res;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['taskListByDate'] }),
-  });
-}
+export function useDeleteTask(ctx: { ownerId?: number }) {
+    const qc = useQueryClient();
+    const ownerIdFromCtx = ctx.ownerId ?? null;
 
-export function useDeleteTask(params: { ownerId?: number }) {
-  const qc = useQueryClient();
+    return useMutation<void, Error, TaskDelete>({
+        async mutationFn({ taskId }: TaskDelete): Promise<void> {
+            const id =
+                typeof taskId === 'number' ? taskId
+                    : (() => { throw new Error('taskId required(number)'); })();
 
-  const ownerFromStore = useOwnerIdValue();                                   // ✅
-  const ownerId =
-    (ownerFromStore ?? (typeof params.ownerId === 'number' ? params.ownerId : DEFAULT_OWNER_ID));
+            const body: DeleteBody = { taskId: id };
+            if (ownerIdFromCtx !== null) body.ownerId = ownerIdFromCtx;
 
-  return useMutation({
-    mutationFn: async (payload: TaskDelete) => {
-      const body = { taskId: payload.taskId, ownerId };
-      const res0 = await apiClient.post(API.remove, body);
-      const res  = unwrap(res0);
-      const { ok, msg } = normalizeOk(res);
-      if (!ok) throw new Error(msg ?? 'deleteTask failed');
-      return res?.result ?? res;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['taskListByDate'] }),
-  });
-}
-
-// local
-function toMillis(d?: string | null) {
-  if (!d) return Number.MAX_SAFE_INTEGER;
-  const s = String(d).replace('T', ' ');
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:\s(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(s);
-  if (!m) return Number.MAX_SAFE_INTEGER;
-  const Y = +m[1], Mo = +m[2] - 1, D = +m[3], h = +(m[4] || 0), mi = +(m[5] || 0), se = +(m[6] || 0);
-  return new Date(Y, Mo, D, h, mi, se).getTime();
+            await firstOkCached<void>('task.deleteTask', [
+                POST<void>(join('/api/tsk/task', 'deleteTask'), body),
+            ]);
+        },
+        onSuccess: () => { qc.invalidateQueries({ queryKey: ['task/byDate'] }); },
+    });
 }
