@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "preinstall": "npm config set fund false && npm config set audit false",
     "dev": "next dev",
     "start": "next start",
+    "prebuild": "npm rebuild lightningcss || exit 0",
     "build": "cross-env LIGHTNINGCSS_USE_WASM=1 LIGHTNINGCSS_IGNORE_NATIVE_BINARY=1 next build",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\"",
@@ -28,7 +30,18 @@
     "next": "^15.5.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^4.5.5"
+    "zustand": "^4.5.5",
+    "lightningcss": "1.30.2",
+    "lightningcss-wasm": "1.30.2"
+  },
+  "overrides": {
+    "lightningcss": "1.30.2",
+    "@tailwindcss/node": {
+      "lightningcss": "1.30.2"
+    },
+    "@tailwindcss/postcss": {
+      "lightningcss": "1.30.2"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",
