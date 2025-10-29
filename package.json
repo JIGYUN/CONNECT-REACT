@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "start": "next start",
+    "build": "cross-env LIGHTNINGCSS_IGNORE_NATIVE_BINARY=1 next build",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css}\"",
-    "pages:build": "npx @cloudflare/next-on-pages@latest",
+    "pages:build": "cross-env LIGHTNINGCSS_IGNORE_NATIVE_BINARY=1 npx @cloudflare/next-on-pages@latest",
     "pages:preview": "wrangler pages dev .vercel/output/static --compatibility-date=2024-10-01",
     "pages:deploy": "wrangler pages deploy .vercel/output/static --project-name=connect-react"
   },
@@ -38,6 +39,7 @@
     "@typescript-eslint/eslint-plugin": "^8.46.1",
     "@typescript-eslint/parser": "^8.46.1",
     "autoprefixer": "^10.4.21",
+    "cross-env": "^10.1.0",
     "eslint": "^9.38.0",
     "eslint-config-next": "^15.5.5",
     "eslint-plugin-jsonc": "^2.21.0",
