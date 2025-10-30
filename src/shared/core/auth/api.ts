@@ -1,101 +1,93 @@
 import { postJson } from '@/shared/core/apiClient';
 
+// 로그인 입력 / 결과 타입
 export type LoginInput = { email: string; password: string };
-export type LoginResult = { userId: number; name: string | null; email: string | null };
+export type LoginResult = {
+    userId: number;
+    name: string | null;
+    email: string;
+};
 
-/* ───────────── type guards & pickers ───────────── */
-
+// 내부 헬퍼들
 function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null;
+    return typeof v === 'object' && v !== null;
 }
-
 function pickObj(o: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-  const v = o[key];
-  return isObject(v) ? (v as Record<string, unknown>) : undefined;
+    const v = o[key];
+    return isObject(v) ? (v as Record<string, unknown>) : undefined;
 }
-
 function pickNum(o: Record<string, unknown> | undefined, ...keys: string[]): number | null {
-  if (!o) return null;
-  for (const k of keys) {
-    const v = o[k];
-    if (typeof v === 'number' && Number.isFinite(v)) return v;
-    if (typeof v === 'string') {
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
+    if (!o) return null;
+    for (const k of keys) {
+        const v = o[k];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v === 'string') {
+            const n = Number(v);
+            if (Number.isFinite(n)) return n;
+        }
     }
-  }
-  return null;
-}
-
-/** 다양한 래핑(result/data/user)과 키(userId/USER_ID/id/ID) 모두 흡수 */
-function pickUserId(v: unknown): number | null {
-  if (!isObject(v)) return null;
-  const o = v as Record<string, unknown>;
-  const result = pickObj(o, 'result');
-  const data = pickObj(o, 'data');
-  const user = pickObj(o, 'user');
-
-  const r = pickNum(result, 'userId', 'USER_ID', 'id', 'ID');
-  if (r != null) return r;
-
-  const d = pickNum(data, 'userId', 'USER_ID', 'id', 'ID');
-  if (d != null) return d;
-
-  const u = pickNum(user, 'userId', 'USER_ID', 'id', 'ID');
-  if (u != null) return u;
-
-  return pickNum(o, 'userId', 'USER_ID', 'id', 'ID');
-}
-
-function pickStr(o: Record<string, unknown> | undefined, ...keys: string[]): string | null {
-  if (!o) return null;
-  for (const k of keys) {
-    const v = o[k];
-    if (typeof v === 'string') return v;
-  }
-  return null;
-}
-
-/* ───────────── API ───────────── */
-
-export async function apiLogin(input: LoginInput): Promise<LoginResult> {
-  const data = await postJson<unknown>('/api/auth/selectLogin', input);
-  const userId = pickUserId(data);
-  if (userId == null) throw new Error('Invalid login response');
-  return { userId, name: null, email: input.email };
-}
-
-export async function apiLogout(): Promise<{ ok: true }> {
-  try {
-    await fetch('/api/auth/session', { method: 'DELETE', credentials: 'include' });
-  } catch {
-    // ignore
-  }
-  return { ok: true as const };
-}
-
-/** 현재 세션 조회 (없으면 null) */
-export async function apiMe(): Promise<LoginResult | null> {
-  try {
-    const res = await fetch('/api/auth/session', { method: 'GET', credentials: 'include' });
-    const raw: unknown = await res.json().catch(() => null);
-
-    if (!isObject(raw)) return null;
-    const o = raw as Record<string, unknown>;
-    // 응답 래핑 해제
-    const payload =
-      (pickObj(o, 'result') as Record<string, unknown> | undefined) ??
-      (pickObj(o, 'data') as Record<string, unknown> | undefined) ??
-      (isObject(o) ? (o as Record<string, unknown>) : undefined);
-
-    const userId = pickUserId(payload ?? o);
-    if (userId == null) return null;
-
-    const name = pickStr(payload, 'name', 'NAME') ?? null;
-    const email = pickStr(payload, 'email', 'EMAIL') ?? null;
-
-    return { userId, name, email };
-  } catch {
     return null;
-  }
+}
+function pickStr(o: Record<string, unknown> | undefined, ...keys: string[]): string | null {
+    if (!o) return null;
+    for (const k of keys) {
+        const v = o[k];
+        if (typeof v === 'string') return v;
+    }
+    return null;
+}
+
+/**
+ * 백엔드(Spring) 로그인 API 호출.
+ *  - /api/auth/selectLogin → rewrite → Spring 서버
+ *  - 반환 JSON 구조는 우리 백엔드 마음대로일 수 있어서 여러 케이스를 흡수.
+ */
+export async function apiLogin(input: LoginInput): Promise<LoginResult> {
+    const data = await postJson<unknown>('/api/auth/selectLogin', input);
+
+    // 다양한 wrapping(result/data/user)에서 userId/email/name 뽑기
+    if (!isObject(data)) throw new Error('Invalid login response');
+
+    const all = data as Record<string, unknown>;
+    const result = pickObj(all, 'result') ?? pickObj(all, 'data') ?? pickObj(all, 'user') ?? all;
+
+    const userId =
+        pickNum(result, 'userId', 'USER_ID', 'id', 'ID') ??
+        pickNum(all, 'userId', 'USER_ID', 'id', 'ID');
+
+    if (userId == null) throw new Error('Invalid login response(userId)');
+
+    const email =
+        pickStr(result, 'email', 'EMAIL') ??
+        pickStr(all, 'email', 'EMAIL') ??
+        input.email;
+
+    const name =
+        pickStr(result, 'name', 'NAME') ??
+        pickStr(all, 'name', 'NAME') ??
+        null;
+
+    if (!email) throw new Error('Invalid login response(email)');
+
+    return {
+        userId,
+        email,
+        name,
+    };
+}
+
+/**
+ * optional: 서버 세션 정리 API(만약 백엔드에서 세션/로그 기록 지우고 싶으면 호출)
+ * 백엔드에 /api/auth/logout 같은 게 있다면 여기서 POST 해도 된다.
+ * UI 동작은 이거 없이도 된다.
+ */
+export async function apiServerLogout(): Promise<void> {
+    try {
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            credentials: 'include',
+        });
+    } catch {
+        // 서버 없으면 그냥 무시
+    }
 }
