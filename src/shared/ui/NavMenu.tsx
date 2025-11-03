@@ -28,6 +28,7 @@ const routes = {
     task: '/task' as Route,
     diary: '/diary' as Route,
     ledger: '/ledger' as Route,
+    reservation: '/reservation' as Route,
 };
 
 type SafeMe = {
@@ -185,6 +186,9 @@ export default function NavMenu() {
                         </Link>
                         <Link href={routes.ledger}>
                             <span className="mi">•</span> 가계부
+                        </Link>
+                        <Link href={routes.reservation}>
+                            <span className="mi">•</span> 예약
                         </Link>
                     </nav>
 
