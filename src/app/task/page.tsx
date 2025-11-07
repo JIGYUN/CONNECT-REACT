@@ -196,14 +196,14 @@ function TasksPage() {
   const items: UiTask[] = useMemo(() => (q.data ?? []).map(toUiTask), [q.data]);
 
   return (
-    <div className="wrap mx-auto max-w-[720px] p-4">
+    <div className="wrap mx-auto max-w-[720px] p-4 overflow-x-hidden">
       <div className="mb-3 flex items-center justify-between">
         <h1 className="text-base font-semibold">Tasks</h1>
         <span className="text-xs text-slate-500">{dateStr}</span>
       </div>
 
       {/* 달력 */}
-      <div className="mb-4 rounded-xl bg-white p-3 shadow-sm">
+      <div className="mb-4 overflow-hidden rounded-xl bg-white p-3 shadow-sm">
         <div className="mb-2 flex items-center justify-between">
           <button
             onClick={() => moveMonth(-1)}
@@ -249,13 +249,13 @@ function TasksPage() {
         </div>
       </div>
 
-      {/* 입력줄 — 높이/정렬 통일 */}
+      {/* 입력줄 — 갤폴드5에서 가로 넘침 방지 (min-w-0 + 더 좁은 time 폭) */}
       <div className="mb-3 flex items-center gap-2">
         <input
           ref={titleRef}
           type="text"
           placeholder="할 일을 입력"
-          className="h-10 flex-1 rounded-lg border border-slate-200 px-3 text-sm"
+          className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm"
           onKeyDown={(e) => {
             if (e.key === 'Enter') void onAdd();
           }}
@@ -264,7 +264,7 @@ function TasksPage() {
           value={time}
           onChange={(e) => setTime(e.target.value)}
           type="time"
-          className="h-10 w-[110px] rounded-lg border border-slate-200 px-2 text-sm"
+          className="h-10 w-24 sm:w-[110px] rounded-lg border border-slate-200 px-2 text-sm"
         />
         <button
           onClick={onAdd}

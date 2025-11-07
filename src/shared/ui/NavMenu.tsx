@@ -1,27 +1,17 @@
+// filepath: src/app/NavMenu.tsx
 'use client';
 
 import Link from 'next/link';
 import type { Route } from 'next';
-import {
-    useEffect,
-    useState,
-    type Dispatch,
-    type SetStateAction,
-} from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { usePathname } from 'next/navigation';
 import useMounted from './useMounted';
 
-import {
-    getClientSession,
-    clearClientSession,
-} from '@/shared/core/auth/clientSession';
-import {
-    useOwnerIdValue,
-    setOwnerId,
-    clearOwnerId,
-} from '@/shared/core/owner';
-import { apiServerLogout } from '@/shared/core/auth/api';
+import { getClientSession, clearClientSession } from '@/shared/core/auth/clientSession';
+import { useOwnerIdValue, setOwnerId, clearOwnerId } from '@/shared/core/owner';
+import { apiServerLogout, clearUserFcmToken, setUserFcmToken } from '@/shared/core/auth/api';
 
+/* ───────────────────────── 라우트 ───────────────────────── */
 const routes = {
     home: '/' as Route,
     boardPost: '/boardPost' as Route,
@@ -29,77 +19,155 @@ const routes = {
     diary: '/diary' as Route,
     ledger: '/ledger' as Route,
     reservation: '/reservation' as Route,
-};
+} as const;
 
-type SafeMe = {
-    userId: number;
-    email: string;
-    name: string | null;
-};
+/* ───────────────────────── 유틸 ───────────────────────── */
+type SafeMe = { userId: number; email: string; name: string | null };
 
 function usernameFrom(me: SafeMe | null): string {
     if (me?.name && me.name.trim()) return me.name;
-    if (me?.email && me.email.includes('@')) {
-        return me.email.split('@')[0]!;
-    }
+    if (me?.email && me.email.includes('@')) return me.email.split('@')[0]!;
     if (me?.userId) return `USER#${me.userId}`;
     return '게스트';
 }
 
+function isObject(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null;
+}
+function pickStr(o: Record<string, unknown>, key: string): string | null {
+    const v = o[key];
+    return typeof v === 'string' ? v : null;
+}
+
+/** window.Android?.postMessage 안전 추출(브래킷 접근만 사용) */
+function getAndroidPostMessage(): ((payload: string) => void) | null {
+    const w: unknown = typeof window !== 'undefined' ? window : null;
+    if (!isObject(w)) return null;
+    const a = (w as Record<string, unknown>)['Android'];
+    if (!isObject(a)) return null;
+    const fn = (a as Record<string, unknown>)['postMessage'];
+    return typeof fn === 'function' ? (fn as (payload: string) => void) : null;
+}
+
+/* ───────────────────────── 컴포넌트 ───────────────────────── */
 export default function NavMenu() {
     const mounted = useMounted();
     const pathname = usePathname();
 
-    const [open, setOpen]: [boolean, Dispatch<SetStateAction<boolean>>] =
-        useState<boolean>(false);
+    const [open, setOpen]: [boolean, Dispatch<SetStateAction<boolean>>] = useState(false);
+    const [me, setMe]: [SafeMe | null, Dispatch<SetStateAction<SafeMe | null>>] = useState<SafeMe | null>(null);
 
-    const [me, setMe]: [SafeMe | null, Dispatch<SetStateAction<SafeMe | null>>] =
-        useState<SafeMe | null>(null);
-
-    // ownerId는 내부 상태 동기화 용도. 로그인 판정에는 쓰지 않는다.
+    // ownerId는 내부 상태 동기화 용도
     const ownerId = (useOwnerIdValue as () => number | null | undefined)();
 
-    // pathname 바뀔 때마다 쿠키 다시 읽어 상태 새로고침
+    // 동일 토큰 중복 작업 방지
+    const lastTokenRef = useRef<string | null>(null);
+
+    // 키 상수
+    const PENDING = 'pending_fcm_token';
+    const LAST = 'last_fcm_token';
+
+    // 라우트 변동마다 세션 재동기화
     useEffect(() => {
         const s = getClientSession();
         if (s && typeof s.userId === 'number') {
-            setMe({
-                userId: s.userId,
-                email: s.email,
-                name: s.name ?? null,
-            });
-            // 보조적으로 zustand에도 반영(없다면 세팅)
-            if (!ownerId || ownerId !== s.userId) {
-                setOwnerId(s.userId);
-            }
+            setMe({ userId: s.userId, email: s.email, name: s.name ?? null });
+            if (!ownerId || ownerId !== s.userId) setOwnerId(s.userId);
         } else {
             setMe(null);
         }
-    }, [pathname, ownerId]);
+    }, [pathname]);
+
+    /* ───────── WebView FCM 토큰 수신/요청 ───────── */
+    useEffect(() => {
+        if (!mounted) return;
+
+        const onNative = (ev: Event) => {
+            const dUnknown: unknown = (ev as { detail?: unknown }).detail;
+            if (typeof dUnknown !== 'string') return;
+
+            let msg: unknown;
+            try { msg = JSON.parse(dUnknown); } catch { return; }
+            if (!isObject(msg)) return;
+
+            const type = pickStr(msg, 'type');
+            if (type !== 'fcm-token') return;
+
+            const token = pickStr(msg, 'token');
+            if (!token) return;
+
+            // 중복 alert 방지
+            if (lastTokenRef.current !== token) {
+                lastTokenRef.current = token;
+                alert(`FCM TOKEN 수신:\n${token}`);
+            }
+
+            try {
+                window.localStorage.setItem(PENDING, token);
+                window.localStorage.setItem(LAST, token);
+            } catch { /* ignore */ }
+        };
+
+        window.addEventListener('native', onNative as EventListener);
+
+        // WebView 환경이면 토큰 요청(페이지 진입 시 1회)
+        try {
+            const fn = getAndroidPostMessage();
+            if (fn) {
+                const payload = JSON.stringify({ type: 'getFcmToken', origin: location.host });
+                fn(payload);
+            }
+        } catch { /* ignore */ }
+
+        return () => window.removeEventListener('native', onNative as EventListener);
+    }, [mounted]);
+
+    /* ───────── 로그인 이후 백업 업서트 루프 ───────── */
+    useEffect(() => {
+        if (!mounted) return;
+        const s = getClientSession();
+        const uid = s && typeof s.userId === 'number' ? s.userId : null;
+        if (!uid) return;
+
+        try {
+            const pending = localStorage.getItem(PENDING);
+            const last = localStorage.getItem(LAST);
+            if (pending && pending !== last) {
+                lastTokenRef.current = pending;
+                localStorage.setItem(LAST, pending);
+                localStorage.removeItem(PENDING);
+                void setUserFcmToken({
+                    userId: uid,                // ✅ TB_USER 키: userId
+                    fcmToken: pending,
+                    platformInfo: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+                }).catch(() => {
+                    // 실패해도 앱 흐름은 유지
+                });
+            }
+        } catch { /* ignore */ }
+    }, [mounted, me?.userId, pathname]);
 
     const loggedIn = !!me && me.userId > 0;
     const username = usernameFrom(me);
 
     const logout = async () => {
-        // 백엔드에게도 세션 종료 통보하고 싶으면 호출(없으면 그냥 try/catch로 무시)
-        try {
-            await apiServerLogout();
-        } catch {
-            /* ignore */
-        }
+        try { await apiServerLogout(); } catch { /* ignore */ }
 
-        // 클라이언트 세션 정리
+        // 정책: 한 계정 1기기 → 로그아웃 시 서버 토큰 해제(원치 않으면 이 블록 제거)
+        try {
+            if (me?.userId) {
+                await clearUserFcmToken(me.userId);
+            }
+        } catch { /* ignore */ }
+
         clearClientSession();
         clearOwnerId();
         setMe(null);
-
         setOpen(false);
         window.location.href = '/login';
     };
 
-    if (!mounted) {
-        return <div data-nav-placeholder="" />;
-    }
+    if (!mounted) return <div data-nav-placeholder="" />;
 
     return (
         <>
@@ -127,76 +195,42 @@ export default function NavMenu() {
                 <span />
             </button>
 
-            <div
-                className={`navmenu ${open ? 'navmenu--open' : ''}`}
-                suppressHydrationWarning
-            >
-                <div
-                    className="navmenu__overlay"
-                    onClick={() => setOpen(false)}
-                />
-                <aside
-                    className="navmenu__sheet"
-                    aria-hidden={!open}
-                >
+            <div className={`navmenu ${open ? 'navmenu--open' : ''}`} suppressHydrationWarning>
+                <div className="navmenu__overlay" onClick={() => setOpen(false)} />
+                <aside className="navmenu__sheet" aria-hidden={!open}>
                     <div className="navmenu__head">
-                        <Link
-                            className="navmenu__brand"
-                            href={routes.home}
-                            onClick={() => setOpen(false)}
-                        >
+                        <Link className="navmenu__brand" href={routes.home} onClick={() => setOpen(false)}>
                             CONNECT
                         </Link>
-                        <button
-                            className="navmenu__close"
-                            onClick={() => setOpen(false)}
-                            aria-label="닫기"
-                        >
-                            ×
-                        </button>
+                        <button className="navmenu__close" onClick={() => setOpen(false)} aria-label="닫기">×</button>
                     </div>
 
                     <div className="navmenu__user">
-                        <div className="navmenu__avatar">
-                            {username.charAt(0).toUpperCase()}
-                        </div>
+                        <div className="navmenu__avatar">{username.charAt(0).toUpperCase()}</div>
                         <div className="navmenu__usertext">
-                            <div className="navmenu__username">
-                                {username}
-                            </div>
-                            <div className="navmenu__sub">
-                                {loggedIn
-                                    ? '로그인됨'
-                                    : '로그인이 필요합니다'}
-                            </div>
+                            <div className="navmenu__username">{username}</div>
+                            <div className="navmenu__sub">{loggedIn ? '로그인됨' : '로그인이 필요합니다'}</div>
                         </div>
                     </div>
 
                     <hr className="navmenu__divider" />
 
-                    <nav
-                        className="navmenu__nav"
-                        onClick={() => setOpen(false)}
-                    >
-                        <Link href={routes.task}>
-                            <span className="mi">•</span> 작업
-                        </Link>
-                        <Link href={routes.diary}>
-                            <span className="mi">•</span> 다이어리
-                        </Link>
-                        <Link href={routes.ledger}>
-                            <span className="mi">•</span> 가계부
-                        </Link>
-                        <Link href={routes.reservation}>
-                            <span className="mi">•</span> 예약
-                        </Link>
+                    <nav className="navmenu__nav" onClick={() => setOpen(false)}>
+                        <Link href={routes.task}><span className="mi">•</span> 작업</Link>
+                        <Link href={routes.diary}><span className="mi">•</span> 다이어리</Link>
+                        <Link href={routes.ledger}><span className="mi">•</span> 가계부</Link>
+                        <Link href={routes.reservation}><span className="mi">•</span> 예약</Link>
                     </nav>
 
                     <div className="navmenu__actions">
                         {loggedIn ? (
+                            // ⬇⬇ 안드로이드 하단 네비에 가리지 않도록 "살짝 위로"
                             <button
                                 className="btn btn--outline"
                                 onClick={logout}
+                                style={{
+                                    marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)',
+                                }}
                             >
                                 로그아웃
                             </button>
@@ -205,6 +239,9 @@ export default function NavMenu() {
                                 className="btn btn--outline"
                                 href={'/login' as Route}
                                 onClick={() => setOpen(false)}
+                                style={{
+                                    marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)',
+                                }}
                             >
                                 로그인
                             </Link>
