@@ -19,6 +19,7 @@ const routes = {
     diary: '/diary' as Route,
     ledger: '/ledger' as Route,
     reservation: '/reservation' as Route,
+    chatRoom: '/chatRoom' as Route,
 } as const;
 
 /* ───────────────────────── 유틸 ───────────────────────── */
@@ -220,6 +221,7 @@ export default function NavMenu() {
                         <Link href={routes.diary}><span className="mi">•</span> 다이어리</Link>
                         <Link href={routes.ledger}><span className="mi">•</span> 가계부</Link>
                         <Link href={routes.reservation}><span className="mi">•</span> 예약</Link>
+                        <Link href={routes.chatRoom}><span className="mi">•</span> 채팅방</Link>
                     </nav>
 
                     <div className="navmenu__actions">
