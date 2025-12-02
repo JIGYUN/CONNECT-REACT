@@ -22,7 +22,13 @@ import {
 } from '@/shared/chatRoom/api/queries';
 
 // === 환경 상수 ===
-const WS_ENDPOINT = 'http://localhost:8080/ws-stomp';
+// .env.local 의 NEXT_PUBLIC_API_BASE 기준으로 WebSocket endpoint 구성
+// 예) NEXT_PUBLIC_API_BASE=http://192.168.26.28:8080  →  http://192.168.26.28:8080/ws-stomp
+const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE ?? '';
+const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
+const WS_ENDPOINT =
+    (API_BASE && `${API_BASE}/ws-stomp`) || 'http://localhost:8080/ws-stomp';
+
 const TOPIC_PREFIX = '/topic/chat/';
 const SEND_PREFIX = '/app/chat/';
 
@@ -120,7 +126,8 @@ function getEmailFromConnectSession(): string | null {
 // ==== STOMP 클라이언트 생성 ====
 function createStompClient(): Client {
     const client = new Client({
-        webSocketFactory: () => new SockJS(WS_ENDPOINT) as unknown as WebSocket,
+        webSocketFactory: () =>
+            new SockJS(WS_ENDPOINT) as unknown as WebSocket,
         reconnectDelay: 5000,
     });
     return client;
@@ -353,7 +360,8 @@ export default function ChatMessagePage() {
                 )}
 
                 {messages.map((m) => {
-                    const id = m.id ?? m.createdDt ?? Math.random().toString(36);
+                    const id =
+                        m.id ?? m.createdDt ?? Math.random().toString(36);
                     const isMine =
                         ownerId !== null &&
                         ownerId !== undefined &&
