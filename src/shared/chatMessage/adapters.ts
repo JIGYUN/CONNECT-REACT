@@ -1,5 +1,5 @@
 // filepath: src/shared/chatMessage/adapters.ts
-import type { ChatMessageEntry } from '@/shared/chatMessage/types';
+import type { ChatMessageEntry } from '@/shared/chatMessage';
 
 const isRec = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null;
@@ -27,7 +27,7 @@ function pickNum(o: Record<string, unknown>, keys: string[]): number | null {
 /** result/data/item 래핑을 최대 5단계 언랩 */
 function unwrapRow(row: unknown): Record<string, unknown> {
     let cur: unknown = row;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 5; i += 1) {
         if (!isRec(cur)) break;
         const next =
             (isRec(cur['result']) && cur['result']) ||
@@ -60,6 +60,16 @@ export function adaptInChatMessage(row: unknown): ChatMessageEntry {
     const updatedDtField = pickStr(o, ['UPDATED_DT', 'updatedDt']);
     const updatedByField = pickNum(o, ['UPDATED_BY', 'updatedBy']);
 
+    // AI 필드들
+    const translatedTextField = pickStr(o, ['TRANSLATED_TEXT', 'translatedText']);
+    const translateErrorMsgField = pickStr(o, [
+        'TRANSLATE_ERROR_MSG',
+        'translateErrorMsg',
+    ]);
+    const engineField = pickStr(o, ['ENGINE', 'engine']);
+    const targetLangField = pickStr(o, ['TARGET_LANG', 'targetLang']);
+    const sourceLangField = pickStr(o, ['SOURCE_LANG', 'sourceLang']);
+
     return {
         id: idField ?? null,
         roomId: roomIdField ?? null,
@@ -74,6 +84,12 @@ export function adaptInChatMessage(row: unknown): ChatMessageEntry {
         createdBy: createdByField ?? null,
         updatedDt: updatedDtField ?? null,
         updatedBy: updatedByField ?? null,
+
+        translatedText: translatedTextField ?? null,
+        translateErrorMsg: translateErrorMsgField ?? null,
+        engine: engineField ?? null,
+        targetLang: targetLangField ?? null,
+        sourceLang: sourceLangField ?? null,
     };
 }
 
@@ -95,5 +111,12 @@ export function adaptOutChatMessage(
         CREATED_BY: input.createdBy ?? null,
         UPDATED_DT: input.updatedDt ?? null,
         UPDATED_BY: input.updatedBy ?? null,
+
+        // 필요하면 서버에서 사용할 수 있게 AI 필드도 같이 보냄
+        TRANSLATED_TEXT: input.translatedText ?? null,
+        TRANSLATE_ERROR_MSG: input.translateErrorMsg ?? null,
+        ENGINE: input.engine ?? null,
+        TARGET_LANG: input.targetLang ?? null,
+        SOURCE_LANG: input.sourceLang ?? null,
     };
 }

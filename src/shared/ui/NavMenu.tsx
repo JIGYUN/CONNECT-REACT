@@ -20,6 +20,8 @@ const routes = {
     ledger: '/ledger' as Route,
     reservation: '/reservation' as Route,
     chatRoom: '/chatRoom' as Route,
+    chatAiRoom: '/chatAiRoom' as Route,
+    chatBotRoom: '/chatBotRoom' as Route,
 } as const;
 
 /* ───────────────────────── 유틸 ───────────────────────── */
@@ -222,6 +224,8 @@ export default function NavMenu() {
                         <Link href={routes.ledger}><span className="mi">•</span> 가계부</Link>
                         <Link href={routes.reservation}><span className="mi">•</span> 예약</Link>
                         <Link href={routes.chatRoom}><span className="mi">•</span> 채팅방</Link>
+                        <Link href={routes.chatAiRoom}><span className="mi">•</span> 채팅 자동번역</Link>
+                        <Link href={routes.chatBotRoom}><span className="mi">•</span> 챗봇</Link>
                     </nav>
 
                     <div className="navmenu__actions">

@@ -1,3 +1,4 @@
+// filepath: src/shared/chatMessage/types.ts
 import type { Id } from '@/shared/types/common';
 
 /**
@@ -19,6 +20,13 @@ export type ChatMessageEntry = {
     createdBy?: number | null;
     updatedDt?: string | null;
     updatedBy?: number | null;
+
+    // === AI 번역/엔진 필드 (TB_CHAT_MESSAGE 컬럼 + 서버 가공) ===
+    translatedText?: string | null;
+    translateErrorMsg?: string | null;
+    engine?: string | null;
+    targetLang?: string | null;
+    sourceLang?: string | null;
 };
 
 /**
