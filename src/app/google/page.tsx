@@ -1,49 +1,90 @@
-// src/app/login/google/success/page.tsx
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import type { Route } from 'next';
 import { useEffect } from 'react';
+import {
+    setClientSession,
+    type ClientSession,
+} from '@/shared/core/auth/clientSession';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
-type MeResponse = {
-    ok: boolean;
-    result?: {
-        userId: string;
-        email: string;
-        userNm: string;
-    };
+type MeResult = {
+    userId: number | string;
+    email: string;
+    userNm: string;
 };
 
-export default function GoogleLoginSuccessPage() {
+type MeResponse = {
+    ok: boolean;
+    result?: MeResult;
+};
+
+export default function GoogleLoginBridgePage() {
     const router = useRouter();
+    const params = useSearchParams();
 
     useEffect(() => {
         const run = async () => {
-            const res = await fetch(`${API_BASE}/api/me`, {
-                method: 'GET',
-                credentials: 'include', // 세션 쿠키 같이
-            });
+            try {
+                const res = await fetch(`${API_BASE}/api/me`, {
+                    method: 'GET',
+                    credentials: 'include',
+                });
 
-            if (!res.ok) {
-                router.replace('/login');
-                return;
+                if (!res.ok) {
+                    router.replace('/login' as Route);
+                    return;
+                }
+
+                const data = (await res.json()) as MeResponse;
+                const u = data.result;
+                if (!data.ok || !u) {
+                    router.replace('/login' as Route);
+                    return;
+                }
+
+                const userIdNum =
+                    typeof u.userId === 'number'
+                        ? u.userId
+                        : Number(u.userId);
+
+                const session: ClientSession = {
+                    userId: userIdNum,
+                    email: u.email,
+                    name: u.userNm,
+                    loggedAt: Date.now(),
+                };
+                setClientSession(session);
+
+                const rawNext = params.get('next');
+                let nextPath: string = '/';
+                if (rawNext) {
+                    try {
+                        const decoded = decodeURIComponent(rawNext);
+                        if (decoded.startsWith('/')) {
+                            nextPath = decoded;
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                }
+                if (
+                    nextPath.startsWith('/login') ||
+                    nextPath.startsWith('/signup')
+                ) {
+                    nextPath = '/';
+                }
+
+                router.replace(nextPath as Route);
+            } catch {
+                router.replace('/login' as Route);
             }
-
-            const data = (await res.json()) as MeResponse;
-            if (!data.ok || !data.result) {
-                router.replace('/login');
-                return;
-            }
-
-            // TODO: 전역 상태 저장 (Zustand/Context 등)
-            // setUser(data.result);
-
-            router.replace('/'); // 메인 이동
         };
 
         void run();
-    }, [router]);
+    }, [params, router]);
 
-    return <div>Signing you in with Google...</div>;
+    return <div>Google 로그인 처리 중…</div>;
 }

@@ -1,4 +1,3 @@
-// filepath: src/app/login/page.tsx
 'use client';
 
 import { useMemo, useState, useEffect } from 'react';
@@ -15,7 +14,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
 export default function LoginPage() {
     const params = useSearchParams();
 
-    // next 파라미터 안전 디코드 + 정규화(루프 방지)
     const nextPath = useMemo(() => {
         const raw = params.get('next');
         let path = '/';
@@ -27,12 +25,10 @@ export default function LoginPage() {
                 /* ignore */
             }
         }
-        // 인증 페이지로의 리다이렉트는 금지 → 홈으로
         if (path.startsWith('/login') || path.startsWith('/signup')) return '/';
         return path;
     }, [params]);
 
-    // 이미 로그인돼 있으면 즉시 이동 (로컬 세션 기준)
     useEffect(() => {
         const s = getClientSession();
         if (s) {
@@ -54,7 +50,6 @@ export default function LoginPage() {
             return;
         }
 
-        // ── 로그인과 함께 보낼 FCM 토큰/플랫폼 정보(없으면 null이 아닌 키 생략) ──
         let fcmToken: string | null = null;
         try {
             const t =
@@ -104,16 +99,14 @@ export default function LoginPage() {
         }
     };
 
-    // Google 로그인 시작
     const onGoogleLogin = () => {
         if (!API_BASE) {
             alert('API 서버 설정이 필요합니다.');
             return;
         }
-
         if (typeof window === 'undefined') return;
 
-        const origin = window.location.origin;
+        const origin = window.location.origin; // http://localhost:3000
         const baseSuccessUrl = `${origin}/login/google/success`;
         const successUrl =
             nextPath === '/'
@@ -126,7 +119,6 @@ export default function LoginPage() {
         window.location.href = url;
     };
 
-    // 회원가입 링크: 중첩 next 금지, 현재 next 유지
     const signupNext =
         nextPath === '/'
             ? '/signup'
@@ -165,14 +157,12 @@ export default function LoginPage() {
                     {submitting ? '로그인 중…' : '로그인'}
                 </button>
 
-                {/* 구분선 */}
                 <div className="divider">
                     <span className="line" />
                     <span className="divider-text">또는</span>
                     <span className="line" />
                 </div>
 
-                {/* Google 로그인 버튼 */}
                 <button
                     type="button"
                     className="google-btn"
@@ -182,7 +172,6 @@ export default function LoginPage() {
                     <span>Google 계정으로 로그인</span>
                 </button>
 
-                {/* 보조: 계정 없으면 회원가입 */}
                 <div className="sub">
                     계정이 없으신가요?{' '}
                     <a className="link" href={signupNext}>
@@ -242,9 +231,6 @@ export default function LoginPage() {
                 button:disabled {
                     opacity: 0.6;
                     cursor: default;
-                }
-                button[type='button'] {
-                    font-size: 14px;
                 }
                 button:first-of-type {
                     margin-top: 14px;
