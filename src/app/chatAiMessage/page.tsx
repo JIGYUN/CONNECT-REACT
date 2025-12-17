@@ -6,6 +6,7 @@ import {
     useMemo,
     useRef,
     useState,
+    useLayoutEffect,
     type ChangeEvent,
     type FormEvent,
 } from 'react';
@@ -171,6 +172,11 @@ export default function ChatAiMessagePage() {
         [safeRoomId],
     );
 
+    // ✅ 스크롤 튀는 현상 방지를 위해 초기 위치 고정
+    useEffect(() => {
+        if (typeof window !== 'undefined') window.scrollTo(0, 0);
+    }, []);
+
     // 방 입장 + 히스토리 + STOMP 연결
     useEffect(() => {
         if (safeRoomId === null) {
@@ -251,12 +257,15 @@ export default function ChatAiMessagePage() {
         };
     }, [safeRoomId, ownerId]);
 
-    // 메시지 추가 시 스크롤 아래로
-    useEffect(() => {
-        const el = listRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
-    }, [messages.length]);
+    // ✅ 메시지 추가 시 스크롤 아래로 (LayoutEffect + rAF 사용으로 안정성 확보)
+    useLayoutEffect(() => {
+        requestAnimationFrame(() => {
+            const el = listRef.current;
+            if (el) {
+                el.scrollTop = el.scrollHeight;
+            }
+        });
+    }, [messages]);
 
     const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
         setText(e.target.value);
@@ -299,18 +308,27 @@ export default function ChatAiMessagePage() {
     return (
         <div
             style={{
+                // ✅ 핵심: 화면 전체를 강제로 차지하는 Fixed Position Layout
+                // 이 방식이 모바일 브라우저 주소창 변화 등에 가장 견고합니다.
+                position: 'fixed',
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
                 maxWidth: PAGE_MAX_WIDTH,
                 margin: '0 auto',
-                height: '100vh',
+                
+                backgroundColor: '#e5e5e5',
                 display: 'flex',
                 flexDirection: 'column',
-                backgroundColor: '#e5e5e5',
-                border: '1px solid #ddd',
+                overflow: 'hidden', // 전체 스크롤 방지
+                zIndex: 50,
             }}
         >
-            {/* 헤더 + 대상 언어 선택 */}
+            {/* 헤더 + 대상 언어 선택 (높이 고정) */}
             <div
                 style={{
+                    flexShrink: 0, // 높이 축소 방지
                     padding: '8px 12px',
                     borderBottom: '1px solid #ddd',
                     backgroundColor: '#f7f7f7',
@@ -397,14 +415,15 @@ export default function ChatAiMessagePage() {
                 </div>
             </div>
 
-            {/* 메시지 리스트 */}
+            {/* 메시지 리스트 (남은 공간 모두 차지 + 내부 스크롤) */}
             <div
                 ref={listRef}
                 style={{
-                    flex: 1,
+                    flex: 1, // 남은 공간 모두 차지
                     padding: '12px 10px 8px',
-                    overflowY: 'auto',
+                    overflowY: 'auto', // 내부 스크롤
                     backgroundColor: '#e5e5e5',
+                    WebkitOverflowScrolling: 'touch',
                 }}
             >
                 {messages.length === 0 && (
@@ -577,13 +596,18 @@ export default function ChatAiMessagePage() {
                 })}
             </div>
 
-            {/* 하단 입력창 */}
+            {/* 하단 입력창 (높이 고정 + Safe Area) */}
             <form
                 onSubmit={handleSend}
                 style={{
+                    flexShrink: 0, // 높이 축소 방지
                     padding: '8px 10px',
                     backgroundColor: '#f7f7f7',
                     borderTop: '1px solid #ddd',
+                    
+                    // ✅ 핵심: 안드로이드 네비게이션바 & 아이폰 홈 바 대응
+                    // 기본 패딩 10px + Safe Area 만큼의 공간 확보
+                    paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
                 }}
             >
                 <div
@@ -622,6 +646,7 @@ export default function ChatAiMessagePage() {
                                 : '#aaa',
                             color: '#fff',
                             cursor: text.trim() ? 'pointer' : 'default',
+                            whiteSpace: 'nowrap',
                         }}
                     >
                         보내기

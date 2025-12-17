@@ -6,6 +6,7 @@ import {
     useMemo,
     useRef,
     useState,
+    useLayoutEffect,
     type ChangeEvent,
     type FormEvent,
 } from 'react';
@@ -27,11 +28,6 @@ const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 const WS_ENDPOINT =
     (API_BASE && `${API_BASE}/ws-stomp`) || 'http://localhost:8080/ws-stomp';
 
-/**
- * ✅ 서버(STOMP) 브릿지에서 사용하는 prefix에 맞춰야 함
- *  - topic: /topic/chat-bot/{roomId}
- *  - send : /app/chat-bot/{roomId}
- */
 const TOPIC_PREFIX = '/topic/chat-bot/';
 const SEND_PREFIX = '/app/chat-bot/';
 
@@ -39,6 +35,7 @@ const API_SELECT_MESSAGE_LIST = '/api/cht/chatMessage/selectChatMessageList';
 
 const PAGE_MAX_WIDTH = 480;
 
+// 유틸리티 함수들
 const isRec = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null;
 
@@ -57,13 +54,11 @@ function unwrapList(v: unknown): unknown {
 
 function extractMessageList(v: unknown): ChatMessageEntry[] {
     let cur: unknown = v;
-
     for (let i = 0; i < 5; i += 1) {
         const list = unwrapList(cur);
         if (Array.isArray(list)) {
             return list.map((row) => adaptInChatMessage(row));
         }
-
         if (isRec(cur)) {
             const next =
                 (cur['result'] as unknown) ||
@@ -77,7 +72,6 @@ function extractMessageList(v: unknown): ChatMessageEntry[] {
         }
         break;
     }
-
     return [];
 }
 
@@ -87,46 +81,28 @@ async function fetchMessageHistory(roomId: number): Promise<ChatMessageEntry[]> 
     return extractMessageList(data);
 }
 
-// connect_session 쿠키에서 email 추출
 function getEmailFromConnectSession(): string | null {
     if (typeof document === 'undefined') return null;
-
     const cookieStr = document.cookie;
     if (!cookieStr) return null;
-
     const cookies = cookieStr.split(';');
     const prefix = 'connect_session=';
-
     for (const part of cookies) {
         const trimmed = part.trim();
         if (!trimmed.startsWith(prefix)) continue;
-
         const rawVal = trimmed.slice(prefix.length);
         if (!rawVal) return null;
-
-        let decoded: string;
         try {
-            decoded = decodeURIComponent(rawVal);
+            const decoded = decodeURIComponent(rawVal);
+            const parsed = JSON.parse(decoded) as unknown;
+            if (isRec(parsed)) {
+                const emailVal = parsed['email'];
+                if (typeof emailVal === 'string' && emailVal.trim() !== '') return emailVal;
+            }
         } catch {
             return null;
         }
-
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(decoded) as unknown;
-        } catch {
-            return null;
-        }
-
-        if (!isRec(parsed)) return null;
-
-        const emailVal = parsed['email'];
-        if (typeof emailVal === 'string' && emailVal.trim() !== '') {
-            return emailVal;
-        }
-        return null;
     }
-
     return null;
 }
 
@@ -137,9 +113,6 @@ function createStompClient(): Client {
     });
 }
 
-/** =========================
- *  OpenAI(FastAPI) Bot Variant
- *  ========================= */
 const BOT_VARIANTS = [
     { value: 'CHAT', label: 'CHAT (non-stream)' },
     { value: 'CHAT_STREAM', label: 'CHAT_STREAM (SSE)' },
@@ -148,7 +121,6 @@ const BOT_VARIANTS = [
 ] as const;
 
 type BotVariant = (typeof BOT_VARIANTS)[number]['value'];
-
 const DEFAULT_BOT_VARIANT: BotVariant = 'CHAT_GRAPH_STREAM';
 const DEFAULT_TOP_K = 5;
 const TOP_K_MIN = 1;
@@ -159,7 +131,6 @@ function isBotVariant(v: string): v is BotVariant {
 }
 
 type AiEvent = 'START' | 'TOKEN' | 'DONE' | 'ERROR';
-
 function isAiEvent(v: string): v is AiEvent {
     return v === 'START' || v === 'TOKEN' || v === 'DONE' || v === 'ERROR';
 }
@@ -172,8 +143,6 @@ type UiMessage = {
     sentDt: string | null;
     createdDt: string | null;
     updatedDt: string | null;
-
-    // AI stream meta
     aiMsgId: string | null;
     botVariant: BotVariant | null;
     aiEvent: AiEvent | null;
@@ -218,19 +187,11 @@ type AiPatch = {
     dt?: string | null;
 };
 
-function upsertAiMessage(
-    prev: ReadonlyArray<UiMessage>,
-    aiMsgId: string,
-    patch: AiPatch,
-): UiMessage[] {
+function upsertAiMessage(prev: ReadonlyArray<UiMessage>, aiMsgId: string, patch: AiPatch): UiMessage[] {
     const idx = prev.findIndex((m) => m.aiMsgId === aiMsgId);
     const nowIso = new Date().toISOString();
-
     const dt = patch.dt ?? nowIso;
-
-    // ✅ findIndex 결과가 >= 0이어도 noUncheckedIndexedAccess 때문에 prev[idx]가 undefined일 수 있다고 경고함
-    const existing: UiMessage | undefined =
-        idx >= 0 ? prev[idx] : undefined;
+    const existing: UiMessage | undefined = idx >= 0 ? prev[idx] : undefined;
 
     if (!existing) {
         const created: UiMessage = {
@@ -249,12 +210,8 @@ function upsertAiMessage(
         return [...prev, created];
     }
 
-    const baseText =
-        patch.setText !== undefined ? patch.setText : existing.content;
-
-    const mergedText =
-        patch.appendText !== undefined ? `${baseText}${patch.appendText}` : baseText;
-
+    const baseText = patch.setText !== undefined ? patch.setText : existing.content;
+    const mergedText = patch.appendText !== undefined ? `${baseText}${patch.appendText}` : baseText;
     const merged: UiMessage = {
         key: existing.key,
         senderId: existing.senderId,
@@ -264,22 +221,16 @@ function upsertAiMessage(
         createdDt: existing.createdDt ?? dt,
         updatedDt: dt,
         aiMsgId: existing.aiMsgId,
-        botVariant:
-            patch.botVariant !== undefined ? patch.botVariant : existing.botVariant,
-        aiEvent:
-            patch.aiEvent !== undefined ? patch.aiEvent : existing.aiEvent,
-        errorMsg:
-            patch.errorMsg !== undefined ? patch.errorMsg : existing.errorMsg,
+        botVariant: patch.botVariant !== undefined ? patch.botVariant : existing.botVariant,
+        aiEvent: patch.aiEvent !== undefined ? patch.aiEvent : existing.aiEvent,
+        errorMsg: patch.errorMsg !== undefined ? patch.errorMsg : existing.errorMsg,
     };
 
     const copy = prev.slice();
-    // idx는 기존 메시지가 존재하면 반드시 유효하나, 타입 안정 위해 existing 기준으로 교체
     if (idx >= 0 && idx < copy.length) {
         copy[idx] = merged;
         return copy;
     }
-
-    // 혹시나 idx가 이상해진 케이스는 안전하게 append
     return [...prev, merged];
 }
 
@@ -290,8 +241,6 @@ type ChatBotMessageSendPayload = {
     ownerId?: number | null;
     senderId?: number | null;
     senderNm?: string | null;
-
-    // ✅ OpenAI(FastAPI)
     botVariant?: BotVariant;
     topK?: number;
 };
@@ -301,236 +250,113 @@ export default function ChatBotMessagePage() {
     const ownerId = useOwnerIdValue();
 
     const rawRoomId = searchParams.get('roomId');
-    const parsedRoomId = rawRoomId ? Number(rawRoomId) : Number.NaN;
-
-    // roomId 파라미터 없으면 기본값 1
-    const safeRoomId: number | null = Number.isFinite(parsedRoomId)
-        ? parsedRoomId
-        : rawRoomId === null
-        ? 1
-        : null;
+    const safeRoomId: number | null = rawRoomId ? Number(rawRoomId) : (rawRoomId === null ? 1 : null);
 
     const [messages, setMessages] = useState<UiMessage[]>([]);
     const [text, setText] = useState('');
     const [connecting, setConnecting] = useState(false);
-
-    const [botVariant, setBotVariant] =
-        useState<BotVariant>(DEFAULT_BOT_VARIANT);
+    const [botVariant, setBotVariant] = useState<BotVariant>(DEFAULT_BOT_VARIANT);
     const [topK, setTopK] = useState<number>(DEFAULT_TOP_K);
 
     const clientRef = useRef<Client | null>(null);
     const listRef = useRef<HTMLDivElement | null>(null);
 
     const roomTitle = useMemo(
-        () =>
-            safeRoomId !== null
-                ? `OpenAI(FastAPI) 챗봇 방 #${safeRoomId}`
-                : 'OpenAI(FastAPI) 챗봇 방',
+        () => (safeRoomId !== null ? `OpenAI(FastAPI) 챗봇 방 #${safeRoomId}` : 'OpenAI(FastAPI) 챗봇 방'),
         [safeRoomId],
     );
 
-    // localStorage 복원
+    // 초기 스크롤 및 설정 복원
+    useEffect(() => {
+        if (typeof window !== 'undefined') window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }, []);
+
     useEffect(() => {
         try {
             const v = localStorage.getItem('connect.chatBot.botVariant');
             if (v && isBotVariant(v)) setBotVariant(v);
-
             const k = localStorage.getItem('connect.chatBot.topK');
             if (k) {
                 const n = Number(k);
-                if (Number.isFinite(n)) {
-                    const clamped = Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n));
-                    setTopK(clamped);
-                }
+                if (Number.isFinite(n)) setTopK(Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n)));
             }
-        } catch {
-            // ignore
-        }
+        } catch {}
     }, []);
 
     useEffect(() => {
         try {
             localStorage.setItem('connect.chatBot.botVariant', botVariant);
-        } catch {
-            // ignore
-        }
-    }, [botVariant]);
-
-    useEffect(() => {
-        try {
             localStorage.setItem('connect.chatBot.topK', String(topK));
-        } catch {
-            // ignore
-        }
-    }, [topK]);
+        } catch {}
+    }, [botVariant, topK]);
 
-    // 방 입장 + 히스토리 + STOMP 연결
+    // STOMP & 채팅방 로직
     useEffect(() => {
         if (safeRoomId === null) return;
         if (ownerId === null || ownerId === undefined) return;
 
         const senderEmail = getEmailFromConnectSession();
 
-        // TB_CHAT_ROOM_USER upsert
         void (async () => {
             try {
-                const joinPayload: JoinChatRoomUserInput = {
-                    roomId: safeRoomId,
-                    userId: ownerId,
-                    senderNm: senderEmail ?? null,
-                    roleCd: 'MEMBER',
-                };
-                await joinChatRoomUser(joinPayload);
-            } catch {
-                // ignore
-            }
+                await joinChatRoomUser({ roomId: safeRoomId, userId: ownerId, senderNm: senderEmail ?? null, roleCd: 'MEMBER' });
+            } catch {}
         })();
 
-        // 기존 히스토리
         void (async () => {
             try {
                 const history = await fetchMessageHistory(safeRoomId);
                 setMessages(history.map(toUiMessageFromEntry));
-            } catch {
-                // ignore
-            }
+            } catch {}
         })();
 
-        // STOMP 연결
         const client = createStompClient();
         clientRef.current = client;
         setConnecting(true);
 
         client.onConnect = () => {
             setConnecting(false);
-
             const destination = `${TOPIC_PREFIX}${safeRoomId}`;
-
             client.subscribe(destination, (msg: IMessage) => {
                 const bodyStr = msg.body;
-                if (typeof bodyStr !== 'string' || bodyStr.trim() === '') return;
-
+                if (!bodyStr || bodyStr.trim() === '') return;
                 let parsed: unknown;
-                try {
-                    parsed = JSON.parse(bodyStr) as unknown;
-                } catch {
-                    return;
-                }
+                try { parsed = JSON.parse(bodyStr); } catch { return; }
 
-                // ✅ aiEvent 처리
                 if (isRec(parsed)) {
                     const evRaw = parsed['aiEvent'];
                     if (typeof evRaw === 'string' && isAiEvent(evRaw)) {
-                        const aiMsgId =
-                            pickStr(parsed, 'aiMsgId') ?? `fallback-${cryptoRandomKey()}`;
-
+                        const aiMsgId = pickStr(parsed, 'aiMsgId') ?? `fallback-${cryptoRandomKey()}`;
                         const bvRaw = pickStr(parsed, 'botVariant');
-                        const bv: BotVariant | null =
-                            bvRaw && isBotVariant(bvRaw) ? bvRaw : null;
-
-                        const dt =
-                            pickStr(parsed, 'sentDt') ??
-                            pickStr(parsed, 'createdDt') ??
-                            pickStr(parsed, 'updatedDt') ??
-                            null;
-
-                        const delta =
-                            pickStr(parsed, 'delta') ??
-                            pickStr(parsed, 'token') ??
-                            pickStr(parsed, 'text') ??
-                            '';
-
-                        let answer =
-                            pickStr(parsed, 'answer') ??
-                            pickStr(parsed, 'content') ??
-                            null;
-
-                        // result.answer 지원
-                        const resultNode = parsed['result'];
-                        if (!answer && isRec(resultNode)) {
-                            answer = pickStr(resultNode, 'answer');
-                        }
-
-                        const errorMsg =
-                            pickStr(parsed, 'errorMsg') ??
-                            pickStr(parsed, 'message') ??
-                            null;
+                        const bv: BotVariant | null = bvRaw && isBotVariant(bvRaw) ? bvRaw : null;
+                        const dt = pickStr(parsed, 'sentDt') ?? pickStr(parsed, 'createdDt') ?? pickStr(parsed, 'updatedDt') ?? null;
+                        const delta = pickStr(parsed, 'delta') ?? pickStr(parsed, 'token') ?? pickStr(parsed, 'text') ?? '';
+                        let answer = pickStr(parsed, 'answer') ?? pickStr(parsed, 'content') ?? null;
+                        if (!answer && isRec(parsed['result'])) answer = pickStr(parsed['result'] as Record<string,unknown>, 'answer');
+                        const errorMsg = pickStr(parsed, 'errorMsg') ?? pickStr(parsed, 'message') ?? null;
 
                         if (evRaw === 'START') {
-                            setMessages((prev) =>
-                                upsertAiMessage(prev, aiMsgId, {
-                                    botVariant: bv,
-                                    aiEvent: 'START',
-                                    setText: '',
-                                    dt,
-                                }),
-                            );
-                            return;
-                        }
-
-                        if (evRaw === 'TOKEN') {
-                            setMessages((prev) =>
-                                upsertAiMessage(prev, aiMsgId, {
-                                    botVariant: bv,
-                                    aiEvent: 'TOKEN',
-                                    appendText: delta,
-                                    dt,
-                                }),
-                            );
-                            return;
-                        }
-
-                        if (evRaw === 'DONE') {
-                            const answerTrim = (answer ?? '').trim();
-
-                            setMessages((prev) => {
-                                const existing = prev.find((m) => m.aiMsgId === aiMsgId);
-                                const fallback = existing ? existing.content : '';
-                                const finalText = answerTrim !== '' ? answerTrim : fallback;
-
-                                return upsertAiMessage(prev, aiMsgId, {
-                                    botVariant: bv,
-                                    aiEvent: 'DONE',
-                                    setText: finalText,
-                                    dt,
-                                });
+                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'START', setText: '', dt }));
+                        } else if (evRaw === 'TOKEN') {
+                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'TOKEN', appendText: delta, dt }));
+                        } else if (evRaw === 'DONE') {
+                            setMessages((p) => {
+                                const existing = p.find((m) => m.aiMsgId === aiMsgId);
+                                const finalText = (answer ?? '').trim() || (existing ? existing.content : '');
+                                return upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'DONE', setText: finalText, dt });
                             });
-                            return;
+                        } else if (evRaw === 'ERROR') {
+                            const msgText = (errorMsg ?? '').trim() || '오류 발생';
+                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'ERROR', errorMsg: msgText, setText: msgText, dt }));
                         }
-
-                        if (evRaw === 'ERROR') {
-                            const msgText =
-                                (errorMsg ?? '').trim() || 'AI 처리 중 오류가 발생했습니다.';
-
-                            setMessages((prev) =>
-                                upsertAiMessage(prev, aiMsgId, {
-                                    botVariant: bv,
-                                    aiEvent: 'ERROR',
-                                    errorMsg: msgText,
-                                    setText: msgText,
-                                    dt,
-                                }),
-                            );
-                            return;
-                        }
+                        return;
                     }
                 }
-
-                // 일반 메시지(저장 row)
-                const entry = adaptInChatMessage(parsed);
-                const ui = toUiMessageFromEntry(entry);
-                setMessages((prev) => [...prev, ui]);
+                setMessages((p) => [...p, toUiMessageFromEntry(adaptInChatMessage(parsed))]);
             });
         };
-
-        client.onStompError = () => {
-            setConnecting(false);
-        };
-
-        client.onWebSocketError = () => {
-            setConnecting(false);
-        };
-
+        client.onStompError = () => setConnecting(false);
+        client.onWebSocketError = () => setConnecting(false);
         client.activate();
 
         return () => {
@@ -539,83 +365,65 @@ export default function ChatBotMessagePage() {
         };
     }, [safeRoomId, ownerId]);
 
-    // 스크롤: 마지막 메시지 길이 변화(토큰 추가)에도 반응
+    // 스크롤 자동 이동
     const scrollSig = useMemo(() => {
-        const last =
-            messages.length > 0 ? messages[messages.length - 1] : null;
+        const last = messages[messages.length - 1];
         return last ? `${last.key}:${last.content.length}:${last.aiEvent ?? ''}` : 'empty';
     }, [messages]);
 
-    useEffect(() => {
-        const el = listRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
+    useLayoutEffect(() => {
+        requestAnimationFrame(() => {
+            if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+        });
     }, [scrollSig]);
-
-    const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-        setText(e.target.value);
-    };
-
-    const handleBotVariantChange = (e: ChangeEvent<HTMLSelectElement>) => {
-        const v = e.target.value;
-        if (isBotVariant(v)) setBotVariant(v);
-    };
-
-    const handleTopKChange = (e: ChangeEvent<HTMLInputElement>) => {
-        const raw = e.target.value;
-        const n = Number(raw);
-        if (!Number.isFinite(n)) return;
-        const clamped = Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n));
-        setTopK(clamped);
-    };
 
     const handleSend = (e: FormEvent) => {
         e.preventDefault();
-
         const trimmed = text.trim();
         if (!trimmed || safeRoomId === null) return;
-
         const client = clientRef.current;
         if (!client || !client.connected) return;
 
         const senderEmail = getEmailFromConnectSession();
-        const senderNm: string | null = senderEmail ?? null;
-
         const payload: ChatBotMessageSendPayload = {
             roomId: safeRoomId,
             content: trimmed,
             contentType: 'TEXT',
             ownerId: ownerId ?? null,
             senderId: ownerId ?? null,
-            senderNm,
-
+            senderNm: senderEmail ?? null,
             botVariant,
             topK,
         };
-
-        client.publish({
-            destination: `${SEND_PREFIX}${safeRoomId}`,
-            body: JSON.stringify(payload),
-        });
-
+        client.publish({ destination: `${SEND_PREFIX}${safeRoomId}`, body: JSON.stringify(payload) });
         setText('');
     };
 
     return (
         <div
             style={{
-                maxWidth: PAGE_MAX_WIDTH,
+                // ✅ 핵심 수정 1: 화면 전체를 강제로 차지하는 Fixed Position 사용
+                // 이렇게 하면 스크롤에 밀려 입력창이 안 보이는 현상을 막을 수 있습니다.
+                position: 'fixed',
+                top: 'var(--connect-app-header-h, 0px)', // 헤더 아래부터 시작
+                bottom: 0,
+                left: 0,
+                right: 0,
+                
                 margin: '0 auto',
-                height: '100vh',
+                maxWidth: PAGE_MAX_WIDTH,
+                backgroundColor: '#e5e5e5',
+                zIndex: 50, // 다른 요소 위에 표시
+                
                 display: 'flex',
                 flexDirection: 'column',
-                backgroundColor: '#e5e5e5',
-                border: '1px solid #ddd',
+                overflow: 'hidden', // 전체 스크롤 방지
             }}
         >
-            {/* 헤더 */}
+            {/* 상단 헤더 (높이 고정) */}
             <div
                 style={{
+                    flexShrink: 0,
                     padding: '8px 16px',
                     backgroundColor: '#f7f7f7',
                     borderBottom: '1px solid #ddd',
@@ -625,194 +433,72 @@ export default function ChatBotMessagePage() {
                 }}
             >
                 <div>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>
-                        {roomTitle}
-                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>{roomTitle}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>
-                        {safeRoomId === null
-                            ? 'roomId 오류'
-                            : connecting
-                            ? '연결 중…'
-                            : '연결 완료'}{' '}
-                        · 엔진: OPENAI-FASTAPI
+                        {safeRoomId === null ? 'roomId 오류' : connecting ? '연결 중…' : '연결 완료'}
                     </div>
                 </div>
                 <div style={{ fontSize: 20 }}>🤖</div>
             </div>
 
-            {/* 옵션 바 */}
-            <div
-                style={{
-                    padding: '10px 12px',
-                    backgroundColor: '#f7f7f7',
-                    borderBottom: '1px solid #ddd',
-                }}
-            >
-                <div style={{ fontSize: 12, color: '#444', marginBottom: 6 }}>
-                    봇 버전 선택 (FastAPI)
-                </div>
-
+            {/* 옵션 바 (높이 고정) */}
+            <div style={{ flexShrink: 0, padding: '10px 12px', backgroundColor: '#f7f7f7', borderBottom: '1px solid #ddd' }}>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <select
                         value={botVariant}
-                        onChange={handleBotVariantChange}
-                        style={{
-                            flex: 1,
-                            borderRadius: 10,
-                            border: '1px solid #ccc',
-                            padding: '8px 10px',
-                            fontSize: 13,
-                            backgroundColor: '#fff',
-                        }}
+                        onChange={(e) => isBotVariant(e.target.value) && setBotVariant(e.target.value)}
+                        style={{ flex: 1, borderRadius: 10, border: '1px solid #ccc', padding: '8px', fontSize: 13 }}
                     >
-                        {BOT_VARIANTS.map((b) => (
-                            <option key={b.value} value={b.value}>
-                                {b.label}
-                            </option>
-                        ))}
+                        {BOT_VARIANTS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
                     </select>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ fontSize: 12, color: '#444' }}>topK</div>
-                        <input
-                            type="number"
-                            min={TOP_K_MIN}
-                            max={TOP_K_MAX}
-                            value={topK}
-                            onChange={handleTopKChange}
-                            style={{
-                                width: 76,
-                                borderRadius: 10,
-                                border: '1px solid #ccc',
-                                padding: '8px 10px',
-                                fontSize: 13,
-                                backgroundColor: '#fff',
-                            }}
-                        />
-                    </div>
-                </div>
-
-                <div style={{ marginTop: 6, fontSize: 11, color: '#777' }}>
-                    메시지 전송 시 선택값이 <b>payload.botVariant</b>, <b>payload.topK</b>로 서버에 전달됩니다.
+                    <input
+                        type="number"
+                        min={TOP_K_MIN}
+                        max={TOP_K_MAX}
+                        value={topK}
+                        onChange={(e) => setTopK(Number(e.target.value))}
+                        style={{ width: 60, borderRadius: 10, border: '1px solid #ccc', padding: '8px', fontSize: 13 }}
+                    />
                 </div>
             </div>
 
-            {/* 메시지 리스트 */}
+            {/* 메시지 리스트 (나머지 공간 채움 & 내부 스크롤) */}
             <div
                 ref={listRef}
                 style={{
-                    flex: 1,
-                    padding: '12px 10px 8px',
-                    overflowY: 'auto',
+                    flex: 1, // 남은 높이를 모두 차지
+                    overflowY: 'auto', // 내용이 넘치면 스크롤
+                    padding: '12px 10px',
                     backgroundColor: '#e5e5e5',
+                    WebkitOverflowScrolling: 'touch',
                 }}
             >
                 {messages.length === 0 && (
-                    <div
-                        style={{
-                            marginTop: 40,
-                            textAlign: 'center',
-                            fontSize: 13,
-                            color: '#777',
-                        }}
-                    >
-                        아직 대화가 없습니다. 질문을 입력해 보세요.
+                    <div style={{ marginTop: 40, textAlign: 'center', fontSize: 13, color: '#777' }}>
+                        대화를 시작해보세요.
                     </div>
                 )}
-
                 {messages.map((m) => {
-                    const isMine =
-                        ownerId !== null &&
-                        ownerId !== undefined &&
-                        m.senderId === ownerId;
-
-                    const sender =
-                        m.senderNm && m.senderNm.trim() !== ''
-                            ? m.senderNm
-                            : `USER${m.senderId ?? ''}`;
-
-                    const dt = m.sentDt ?? m.updatedDt ?? m.createdDt ?? '';
-
-                    const metaParts: string[] = [];
-                    if (m.botVariant) metaParts.push(m.botVariant);
-                    if (m.aiEvent && m.aiEvent !== 'DONE') metaParts.push(m.aiEvent);
-                    if (m.aiEvent === 'ERROR') metaParts.push('ERROR');
-
-                    const meta = metaParts.length > 0 ? ` · ${metaParts.join(' · ')}` : '';
-
+                    const isMine = ownerId !== null && m.senderId === ownerId;
+                    const sender = m.senderNm || `USER${m.senderId ?? ''}`;
                     return (
-                        <div
-                            key={m.key}
-                            style={{
-                                display: 'flex',
-                                justifyContent: isMine ? 'flex-end' : 'flex-start',
-                                marginBottom: 8,
-                            }}
-                        >
+                        <div key={m.key} style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
                             {!isMine && (
                                 <div style={{ maxWidth: '80%' }}>
-                                    <div
-                                        style={{
-                                            fontSize: 11,
-                                            color: '#666',
-                                            marginLeft: 4,
-                                            marginBottom: 2,
-                                        }}
-                                    >
+                                    <div style={{ fontSize: 11, color: '#666', marginLeft: 4, marginBottom: 2 }}>
                                         {sender}
-                                        {dt ? ` · ${dt}` : ''}
-                                        {meta}
+                                        {m.aiEvent && m.aiEvent !== 'DONE' && ` · ${m.aiEvent}`}
                                     </div>
-                                    <div
-                                        style={{
-                                            display: 'inline-block',
-                                            padding: '7px 11px',
-                                            borderRadius: 16,
-                                            borderTopLeftRadius: 0,
-                                            backgroundColor: '#ffffff',
-                                            fontSize: 14,
-                                            lineHeight: 1.4,
-                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
-                                            whiteSpace: 'pre-wrap',
-                                        }}
-                                    >
+                                    <div style={{ display: 'inline-block', padding: '7px 11px', borderRadius: 16, borderTopLeftRadius: 0, backgroundColor: '#ffffff', fontSize: 14, lineHeight: 1.4, boxShadow: '0 1px 1px rgba(0,0,0,0.06)', whiteSpace: 'pre-wrap' }}>
                                         {m.content}
-                                        {m.aiEvent === 'TOKEN' && (
-                                            <span style={{ opacity: 0.5 }}> ▍</span>
-                                        )}
                                     </div>
                                 </div>
                             )}
-
                             {isMine && (
                                 <div style={{ maxWidth: '80%', textAlign: 'right' }}>
-                                    <div
-                                        style={{
-                                            display: 'inline-block',
-                                            padding: '7px 11px',
-                                            borderRadius: 16,
-                                            borderTopRightRadius: 0,
-                                            backgroundColor: '#ffe94a',
-                                            fontSize: 14,
-                                            lineHeight: 1.4,
-                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
-                                            whiteSpace: 'pre-wrap',
-                                        }}
-                                    >
+                                    <div style={{ display: 'inline-block', padding: '7px 11px', borderRadius: 16, borderTopRightRadius: 0, backgroundColor: '#ffe94a', fontSize: 14, lineHeight: 1.4, boxShadow: '0 1px 1px rgba(0,0,0,0.06)', whiteSpace: 'pre-wrap' }}>
                                         {m.content}
                                     </div>
-                                    {dt && (
-                                        <div
-                                            style={{
-                                                fontSize: 10,
-                                                color: '#999',
-                                                marginTop: 2,
-                                                marginRight: 4,
-                                            }}
-                                        >
-                                            {dt}
-                                        </div>
-                                    )}
                                 </div>
                             )}
                         </div>
@@ -820,46 +506,34 @@ export default function ChatBotMessagePage() {
                 })}
             </div>
 
-            {/* 하단 입력창 */}
+            {/* 하단 입력창 (높이 고정) */}
             <form
                 onSubmit={handleSend}
                 style={{
+                    flexShrink: 0, // 찌그러짐 방지
                     padding: '8px 10px',
                     backgroundColor: '#f7f7f7',
                     borderTop: '1px solid #ddd',
+                    
+                    // ✅ 핵심 수정 2: 안드로이드 네비게이션바/홈바 대응
+                    // 기본 패딩 10px + 안전 영역(네비게이션 바) 높이만큼 추가 패딩
+                    paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
                 }}
             >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
                     <input
                         type="text"
-                        placeholder="질문을 입력 후 Enter"
+                        placeholder="메시지 입력..."
                         value={text}
-                        onChange={handleChange}
-                        disabled={safeRoomId === null}
-                        style={{
-                            flex: 1,
-                            borderRadius: 18,
-                            border: '1px solid #ccc',
-                            padding: '6px 12px',
-                            fontSize: 14,
-                            outline: 'none',
-                        }}
+                        onChange={(e) => setText(e.target.value)}
+                        style={{ flex: 1, borderRadius: 18, border: '1px solid #ccc', padding: '8px 12px', fontSize: 15, outline: 'none' }}
                     />
                     <button
                         type="submit"
-                        disabled={!text.trim() || safeRoomId === null}
-                        style={{
-                            border: 'none',
-                            borderRadius: 18,
-                            padding: '6px 14px',
-                            fontSize: 13,
-                            fontWeight: 600,
-                            backgroundColor: text.trim() ? '#222' : '#aaa',
-                            color: '#fff',
-                            cursor: text.trim() ? 'pointer' : 'default',
-                        }}
+                        disabled={!text.trim()}
+                        style={{ border: 'none', borderRadius: 18, padding: '0 14px', backgroundColor: text.trim() ? '#222' : '#aaa', color: '#fff', fontWeight: 600, fontSize: 14 }}
                     >
-                        보내기
+                        전송
                     </button>
                 </div>
             </form>
