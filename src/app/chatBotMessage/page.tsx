@@ -12,6 +12,7 @@ import {
 import { useSearchParams } from 'next/navigation';
 import { Client, type IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
+
 import type { ChatMessageEntry } from '@/shared/chatMessage';
 import { adaptInChatMessage } from '@/shared/chatMessage';
 import { useOwnerIdValue } from '@/shared/core/owner';
@@ -26,16 +27,25 @@ const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 const WS_ENDPOINT =
     (API_BASE && `${API_BASE}/ws-stomp`) || 'http://localhost:8080/ws-stomp';
 
+/**
+ * ✅ 서버(STOMP) 브릿지에서 사용하는 prefix에 맞춰야 함
+ *  - topic: /topic/chat-bot/{roomId}
+ *  - send : /app/chat-bot/{roomId}
+ */
 const TOPIC_PREFIX = '/topic/chat-bot/';
 const SEND_PREFIX = '/app/chat-bot/';
 
-const API_SELECT_MESSAGE_LIST =
-    '/api/cht/chatMessage/selectChatMessageList';
+const API_SELECT_MESSAGE_LIST = '/api/cht/chatMessage/selectChatMessageList';
 
 const PAGE_MAX_WIDTH = 480;
 
 const isRec = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null;
+
+function pickStr(o: Record<string, unknown>, k: string): string | null {
+    const v = o[k];
+    return typeof v === 'string' ? v : null;
+}
 
 function unwrapList(v: unknown): unknown {
     if (Array.isArray(v)) return v;
@@ -47,29 +57,31 @@ function unwrapList(v: unknown): unknown {
 
 function extractMessageList(v: unknown): ChatMessageEntry[] {
     let cur: unknown = v;
+
     for (let i = 0; i < 5; i += 1) {
         const list = unwrapList(cur);
         if (Array.isArray(list)) {
             return list.map((row) => adaptInChatMessage(row));
         }
-        if (
-            isRec(cur) &&
-            (isRec(cur['result']) || isRec(cur['data']) || isRec(cur['item']))
-        ) {
-            cur =
+
+        if (isRec(cur)) {
+            const next =
                 (cur['result'] as unknown) ||
                 (cur['data'] as unknown) ||
                 (cur['item'] as unknown);
-            continue;
+
+            if (next !== undefined && next !== null) {
+                cur = next;
+                continue;
+            }
         }
         break;
     }
+
     return [];
 }
 
-async function fetchMessageHistory(
-    roomId: number,
-): Promise<ChatMessageEntry[]> {
+async function fetchMessageHistory(roomId: number): Promise<ChatMessageEntry[]> {
     const payload: Record<string, unknown> = { roomId, limit: 50 };
     const data = await postJson<unknown>(API_SELECT_MESSAGE_LIST, payload);
     return extractMessageList(data);
@@ -77,9 +89,7 @@ async function fetchMessageHistory(
 
 // connect_session 쿠키에서 email 추출
 function getEmailFromConnectSession(): string | null {
-    if (typeof document === 'undefined') {
-        return null;
-    }
+    if (typeof document === 'undefined') return null;
 
     const cookieStr = document.cookie;
     if (!cookieStr) return null;
@@ -121,12 +131,156 @@ function getEmailFromConnectSession(): string | null {
 }
 
 function createStompClient(): Client {
-    const client = new Client({
-        webSocketFactory: () =>
-            new SockJS(WS_ENDPOINT) as unknown as WebSocket,
+    return new Client({
+        webSocketFactory: () => new SockJS(WS_ENDPOINT) as unknown as WebSocket,
         reconnectDelay: 5000,
     });
-    return client;
+}
+
+/** =========================
+ *  OpenAI(FastAPI) Bot Variant
+ *  ========================= */
+const BOT_VARIANTS = [
+    { value: 'CHAT', label: 'CHAT (non-stream)' },
+    { value: 'CHAT_STREAM', label: 'CHAT_STREAM (SSE)' },
+    { value: 'CHAT_GRAPH', label: 'CHAT_GRAPH (LangGraph)' },
+    { value: 'CHAT_GRAPH_STREAM', label: 'CHAT_GRAPH_STREAM (SSE)' },
+] as const;
+
+type BotVariant = (typeof BOT_VARIANTS)[number]['value'];
+
+const DEFAULT_BOT_VARIANT: BotVariant = 'CHAT_GRAPH_STREAM';
+const DEFAULT_TOP_K = 5;
+const TOP_K_MIN = 1;
+const TOP_K_MAX = 50;
+
+function isBotVariant(v: string): v is BotVariant {
+    return BOT_VARIANTS.some((b) => b.value === v);
+}
+
+type AiEvent = 'START' | 'TOKEN' | 'DONE' | 'ERROR';
+
+function isAiEvent(v: string): v is AiEvent {
+    return v === 'START' || v === 'TOKEN' || v === 'DONE' || v === 'ERROR';
+}
+
+type UiMessage = {
+    key: string;
+    senderId: number | null;
+    senderNm: string | null;
+    content: string;
+    sentDt: string | null;
+    createdDt: string | null;
+    updatedDt: string | null;
+
+    // AI stream meta
+    aiMsgId: string | null;
+    botVariant: BotVariant | null;
+    aiEvent: AiEvent | null;
+    errorMsg: string | null;
+};
+
+function cryptoRandomKey(): string {
+    try {
+        const buf = new Uint32Array(2);
+        crypto.getRandomValues(buf);
+        const a = (buf[0] ?? 0).toString(16);
+        const b = (buf[1] ?? 0).toString(16);
+        return `${a}${b}`;
+    } catch {
+        return Math.random().toString(36).slice(2);
+    }
+}
+
+function toUiMessageFromEntry(m: ChatMessageEntry): UiMessage {
+    const key = String(m.id ?? m.createdDt ?? m.sentDt ?? cryptoRandomKey());
+    return {
+        key,
+        senderId: m.senderId ?? null,
+        senderNm: m.senderNm ?? null,
+        content: (m.content ?? '').toString(),
+        sentDt: m.sentDt ?? null,
+        createdDt: m.createdDt ?? null,
+        updatedDt: m.updatedDt ?? null,
+        aiMsgId: null,
+        botVariant: null,
+        aiEvent: null,
+        errorMsg: null,
+    };
+}
+
+type AiPatch = {
+    botVariant?: BotVariant | null;
+    aiEvent?: AiEvent | null;
+    errorMsg?: string | null;
+    appendText?: string;
+    setText?: string;
+    dt?: string | null;
+};
+
+function upsertAiMessage(
+    prev: ReadonlyArray<UiMessage>,
+    aiMsgId: string,
+    patch: AiPatch,
+): UiMessage[] {
+    const idx = prev.findIndex((m) => m.aiMsgId === aiMsgId);
+    const nowIso = new Date().toISOString();
+
+    const dt = patch.dt ?? nowIso;
+
+    // ✅ findIndex 결과가 >= 0이어도 noUncheckedIndexedAccess 때문에 prev[idx]가 undefined일 수 있다고 경고함
+    const existing: UiMessage | undefined =
+        idx >= 0 ? prev[idx] : undefined;
+
+    if (!existing) {
+        const created: UiMessage = {
+            key: `ai:${aiMsgId}`,
+            senderId: 0,
+            senderNm: 'AI',
+            content: (patch.setText ?? '') + (patch.appendText ?? ''),
+            sentDt: dt,
+            createdDt: dt,
+            updatedDt: dt,
+            aiMsgId,
+            botVariant: patch.botVariant ?? null,
+            aiEvent: patch.aiEvent ?? null,
+            errorMsg: patch.errorMsg ?? null,
+        };
+        return [...prev, created];
+    }
+
+    const baseText =
+        patch.setText !== undefined ? patch.setText : existing.content;
+
+    const mergedText =
+        patch.appendText !== undefined ? `${baseText}${patch.appendText}` : baseText;
+
+    const merged: UiMessage = {
+        key: existing.key,
+        senderId: existing.senderId,
+        senderNm: existing.senderNm,
+        content: mergedText,
+        sentDt: existing.sentDt ?? dt,
+        createdDt: existing.createdDt ?? dt,
+        updatedDt: dt,
+        aiMsgId: existing.aiMsgId,
+        botVariant:
+            patch.botVariant !== undefined ? patch.botVariant : existing.botVariant,
+        aiEvent:
+            patch.aiEvent !== undefined ? patch.aiEvent : existing.aiEvent,
+        errorMsg:
+            patch.errorMsg !== undefined ? patch.errorMsg : existing.errorMsg,
+    };
+
+    const copy = prev.slice();
+    // idx는 기존 메시지가 존재하면 반드시 유효하나, 타입 안정 위해 existing 기준으로 교체
+    if (idx >= 0 && idx < copy.length) {
+        copy[idx] = merged;
+        return copy;
+    }
+
+    // 혹시나 idx가 이상해진 케이스는 안전하게 append
+    return [...prev, merged];
 }
 
 type ChatBotMessageSendPayload = {
@@ -136,6 +290,10 @@ type ChatBotMessageSendPayload = {
     ownerId?: number | null;
     senderId?: number | null;
     senderNm?: string | null;
+
+    // ✅ OpenAI(FastAPI)
+    botVariant?: BotVariant;
+    topK?: number;
 };
 
 export default function ChatBotMessagePage() {
@@ -145,16 +303,20 @@ export default function ChatBotMessagePage() {
     const rawRoomId = searchParams.get('roomId');
     const parsedRoomId = rawRoomId ? Number(rawRoomId) : Number.NaN;
 
-    // JSP처럼 roomId 파라미터 없으면 기본값 1 사용
+    // roomId 파라미터 없으면 기본값 1
     const safeRoomId: number | null = Number.isFinite(parsedRoomId)
         ? parsedRoomId
         : rawRoomId === null
         ? 1
         : null;
 
-    const [messages, setMessages] = useState<ChatMessageEntry[]>([]);
+    const [messages, setMessages] = useState<UiMessage[]>([]);
     const [text, setText] = useState('');
     const [connecting, setConnecting] = useState(false);
+
+    const [botVariant, setBotVariant] =
+        useState<BotVariant>(DEFAULT_BOT_VARIANT);
+    const [topK, setTopK] = useState<number>(DEFAULT_TOP_K);
 
     const clientRef = useRef<Client | null>(null);
     const listRef = useRef<HTMLDivElement | null>(null);
@@ -162,20 +324,50 @@ export default function ChatBotMessagePage() {
     const roomTitle = useMemo(
         () =>
             safeRoomId !== null
-                ? `Qwen 챗봇 방 #${safeRoomId}`
-                : 'Qwen 챗봇 방',
+                ? `OpenAI(FastAPI) 챗봇 방 #${safeRoomId}`
+                : 'OpenAI(FastAPI) 챗봇 방',
         [safeRoomId],
     );
 
+    // localStorage 복원
+    useEffect(() => {
+        try {
+            const v = localStorage.getItem('connect.chatBot.botVariant');
+            if (v && isBotVariant(v)) setBotVariant(v);
+
+            const k = localStorage.getItem('connect.chatBot.topK');
+            if (k) {
+                const n = Number(k);
+                if (Number.isFinite(n)) {
+                    const clamped = Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n));
+                    setTopK(clamped);
+                }
+            }
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('connect.chatBot.botVariant', botVariant);
+        } catch {
+            // ignore
+        }
+    }, [botVariant]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('connect.chatBot.topK', String(topK));
+        } catch {
+            // ignore
+        }
+    }, [topK]);
+
     // 방 입장 + 히스토리 + STOMP 연결
     useEffect(() => {
-        if (safeRoomId === null) {
-            return;
-        }
-
-        if (ownerId === null || ownerId === undefined) {
-            return;
-        }
+        if (safeRoomId === null) return;
+        if (ownerId === null || ownerId === undefined) return;
 
         const senderEmail = getEmailFromConnectSession();
 
@@ -190,7 +382,7 @@ export default function ChatBotMessagePage() {
                 };
                 await joinChatRoomUser(joinPayload);
             } catch {
-                // 조용히 무시
+                // ignore
             }
         })();
 
@@ -198,9 +390,9 @@ export default function ChatBotMessagePage() {
         void (async () => {
             try {
                 const history = await fetchMessageHistory(safeRoomId);
-                setMessages(history);
+                setMessages(history.map(toUiMessageFromEntry));
             } catch {
-                // 조용히 무시
+                // ignore
             }
         })();
 
@@ -216,9 +408,7 @@ export default function ChatBotMessagePage() {
 
             client.subscribe(destination, (msg: IMessage) => {
                 const bodyStr = msg.body;
-                if (typeof bodyStr !== 'string' || bodyStr.trim() === '') {
-                    return;
-                }
+                if (typeof bodyStr !== 'string' || bodyStr.trim() === '') return;
 
                 let parsed: unknown;
                 try {
@@ -226,8 +416,110 @@ export default function ChatBotMessagePage() {
                 } catch {
                     return;
                 }
+
+                // ✅ aiEvent 처리
+                if (isRec(parsed)) {
+                    const evRaw = parsed['aiEvent'];
+                    if (typeof evRaw === 'string' && isAiEvent(evRaw)) {
+                        const aiMsgId =
+                            pickStr(parsed, 'aiMsgId') ?? `fallback-${cryptoRandomKey()}`;
+
+                        const bvRaw = pickStr(parsed, 'botVariant');
+                        const bv: BotVariant | null =
+                            bvRaw && isBotVariant(bvRaw) ? bvRaw : null;
+
+                        const dt =
+                            pickStr(parsed, 'sentDt') ??
+                            pickStr(parsed, 'createdDt') ??
+                            pickStr(parsed, 'updatedDt') ??
+                            null;
+
+                        const delta =
+                            pickStr(parsed, 'delta') ??
+                            pickStr(parsed, 'token') ??
+                            pickStr(parsed, 'text') ??
+                            '';
+
+                        let answer =
+                            pickStr(parsed, 'answer') ??
+                            pickStr(parsed, 'content') ??
+                            null;
+
+                        // result.answer 지원
+                        const resultNode = parsed['result'];
+                        if (!answer && isRec(resultNode)) {
+                            answer = pickStr(resultNode, 'answer');
+                        }
+
+                        const errorMsg =
+                            pickStr(parsed, 'errorMsg') ??
+                            pickStr(parsed, 'message') ??
+                            null;
+
+                        if (evRaw === 'START') {
+                            setMessages((prev) =>
+                                upsertAiMessage(prev, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'START',
+                                    setText: '',
+                                    dt,
+                                }),
+                            );
+                            return;
+                        }
+
+                        if (evRaw === 'TOKEN') {
+                            setMessages((prev) =>
+                                upsertAiMessage(prev, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'TOKEN',
+                                    appendText: delta,
+                                    dt,
+                                }),
+                            );
+                            return;
+                        }
+
+                        if (evRaw === 'DONE') {
+                            const answerTrim = (answer ?? '').trim();
+
+                            setMessages((prev) => {
+                                const existing = prev.find((m) => m.aiMsgId === aiMsgId);
+                                const fallback = existing ? existing.content : '';
+                                const finalText = answerTrim !== '' ? answerTrim : fallback;
+
+                                return upsertAiMessage(prev, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'DONE',
+                                    setText: finalText,
+                                    dt,
+                                });
+                            });
+                            return;
+                        }
+
+                        if (evRaw === 'ERROR') {
+                            const msgText =
+                                (errorMsg ?? '').trim() || 'AI 처리 중 오류가 발생했습니다.';
+
+                            setMessages((prev) =>
+                                upsertAiMessage(prev, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'ERROR',
+                                    errorMsg: msgText,
+                                    setText: msgText,
+                                    dt,
+                                }),
+                            );
+                            return;
+                        }
+                    }
+                }
+
+                // 일반 메시지(저장 row)
                 const entry = adaptInChatMessage(parsed);
-                setMessages((prev) => [...prev, entry]);
+                const ui = toUiMessageFromEntry(entry);
+                setMessages((prev) => [...prev, ui]);
             });
         };
 
@@ -247,15 +539,34 @@ export default function ChatBotMessagePage() {
         };
     }, [safeRoomId, ownerId]);
 
-    // 메시지 변경 시 스크롤 맨 아래로
+    // 스크롤: 마지막 메시지 길이 변화(토큰 추가)에도 반응
+    const scrollSig = useMemo(() => {
+        const last =
+            messages.length > 0 ? messages[messages.length - 1] : null;
+        return last ? `${last.key}:${last.content.length}:${last.aiEvent ?? ''}` : 'empty';
+    }, [messages]);
+
     useEffect(() => {
         const el = listRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-    }, [messages.length]);
+    }, [scrollSig]);
 
     const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
         setText(e.target.value);
+    };
+
+    const handleBotVariantChange = (e: ChangeEvent<HTMLSelectElement>) => {
+        const v = e.target.value;
+        if (isBotVariant(v)) setBotVariant(v);
+    };
+
+    const handleTopKChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const raw = e.target.value;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return;
+        const clamped = Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n));
+        setTopK(clamped);
     };
 
     const handleSend = (e: FormEvent) => {
@@ -265,11 +576,8 @@ export default function ChatBotMessagePage() {
         if (!trimmed || safeRoomId === null) return;
 
         const client = clientRef.current;
-        if (!client || !client.connected) {
-            return;
-        }
+        if (!client || !client.connected) return;
 
-        const senderId = ownerId ?? null;
         const senderEmail = getEmailFromConnectSession();
         const senderNm: string | null = senderEmail ?? null;
 
@@ -278,8 +586,11 @@ export default function ChatBotMessagePage() {
             content: trimmed,
             contentType: 'TEXT',
             ownerId: ownerId ?? null,
-            senderId,
+            senderId: ownerId ?? null,
             senderNm,
+
+            botVariant,
+            topK,
         };
 
         client.publish({
@@ -302,7 +613,7 @@ export default function ChatBotMessagePage() {
                 border: '1px solid #ddd',
             }}
         >
-            {/* 헤더 (엔진 설명 포함) */}
+            {/* 헤더 */}
             <div
                 style={{
                     padding: '8px 16px',
@@ -314,29 +625,76 @@ export default function ChatBotMessagePage() {
                 }}
             >
                 <div>
-                    <div
-                        style={{
-                            fontSize: 16,
-                            fontWeight: 700,
-                        }}
-                    >
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>
                         {roomTitle}
                     </div>
-                    <div
-                        style={{
-                            fontSize: 12,
-                            color: '#888',
-                        }}
-                    >
+                    <div style={{ fontSize: 12, color: '#888' }}>
                         {safeRoomId === null
                             ? 'roomId 오류'
                             : connecting
                             ? '연결 중…'
                             : '연결 완료'}{' '}
-                        · 엔진: QWEN-CHATBOT
+                        · 엔진: OPENAI-FASTAPI
                     </div>
                 </div>
                 <div style={{ fontSize: 20 }}>🤖</div>
+            </div>
+
+            {/* 옵션 바 */}
+            <div
+                style={{
+                    padding: '10px 12px',
+                    backgroundColor: '#f7f7f7',
+                    borderBottom: '1px solid #ddd',
+                }}
+            >
+                <div style={{ fontSize: 12, color: '#444', marginBottom: 6 }}>
+                    봇 버전 선택 (FastAPI)
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <select
+                        value={botVariant}
+                        onChange={handleBotVariantChange}
+                        style={{
+                            flex: 1,
+                            borderRadius: 10,
+                            border: '1px solid #ccc',
+                            padding: '8px 10px',
+                            fontSize: 13,
+                            backgroundColor: '#fff',
+                        }}
+                    >
+                        {BOT_VARIANTS.map((b) => (
+                            <option key={b.value} value={b.value}>
+                                {b.label}
+                            </option>
+                        ))}
+                    </select>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ fontSize: 12, color: '#444' }}>topK</div>
+                        <input
+                            type="number"
+                            min={TOP_K_MIN}
+                            max={TOP_K_MAX}
+                            value={topK}
+                            onChange={handleTopKChange}
+                            style={{
+                                width: 76,
+                                borderRadius: 10,
+                                border: '1px solid #ccc',
+                                padding: '8px 10px',
+                                fontSize: 13,
+                                backgroundColor: '#fff',
+                            }}
+                        />
+                    </div>
+                </div>
+
+                <div style={{ marginTop: 6, fontSize: 11, color: '#777' }}>
+                    메시지 전송 시 선택값이 <b>payload.botVariant</b>, <b>payload.topK</b>로 서버에 전달됩니다.
+                </div>
             </div>
 
             {/* 메시지 리스트 */}
@@ -363,8 +721,6 @@ export default function ChatBotMessagePage() {
                 )}
 
                 {messages.map((m) => {
-                    const id =
-                        m.id ?? m.createdDt ?? Math.random().toString(36);
                     const isMine =
                         ownerId !== null &&
                         ownerId !== undefined &&
@@ -375,20 +731,21 @@ export default function ChatBotMessagePage() {
                             ? m.senderNm
                             : `USER${m.senderId ?? ''}`;
 
-                    const dt =
-                        m.sentDt ??
-                        m.updatedDt ??
-                        m.createdDt ??
-                        '';
+                    const dt = m.sentDt ?? m.updatedDt ?? m.createdDt ?? '';
+
+                    const metaParts: string[] = [];
+                    if (m.botVariant) metaParts.push(m.botVariant);
+                    if (m.aiEvent && m.aiEvent !== 'DONE') metaParts.push(m.aiEvent);
+                    if (m.aiEvent === 'ERROR') metaParts.push('ERROR');
+
+                    const meta = metaParts.length > 0 ? ` · ${metaParts.join(' · ')}` : '';
 
                     return (
                         <div
-                            key={String(id)}
+                            key={m.key}
                             style={{
                                 display: 'flex',
-                                justifyContent: isMine
-                                    ? 'flex-end'
-                                    : 'flex-start',
+                                justifyContent: isMine ? 'flex-end' : 'flex-start',
                                 marginBottom: 8,
                             }}
                         >
@@ -404,6 +761,7 @@ export default function ChatBotMessagePage() {
                                     >
                                         {sender}
                                         {dt ? ` · ${dt}` : ''}
+                                        {meta}
                                     </div>
                                     <div
                                         style={{
@@ -414,22 +772,20 @@ export default function ChatBotMessagePage() {
                                             backgroundColor: '#ffffff',
                                             fontSize: 14,
                                             lineHeight: 1.4,
-                                            boxShadow:
-                                                '0 1px 1px rgba(0,0,0,0.06)',
+                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
+                                            whiteSpace: 'pre-wrap',
                                         }}
                                     >
-                                        {m.content ?? ''}
+                                        {m.content}
+                                        {m.aiEvent === 'TOKEN' && (
+                                            <span style={{ opacity: 0.5 }}> ▍</span>
+                                        )}
                                     </div>
                                 </div>
                             )}
 
                             {isMine && (
-                                <div
-                                    style={{
-                                        maxWidth: '80%',
-                                        textAlign: 'right',
-                                    }}
-                                >
+                                <div style={{ maxWidth: '80%', textAlign: 'right' }}>
                                     <div
                                         style={{
                                             display: 'inline-block',
@@ -439,11 +795,11 @@ export default function ChatBotMessagePage() {
                                             backgroundColor: '#ffe94a',
                                             fontSize: 14,
                                             lineHeight: 1.4,
-                                            boxShadow:
-                                                '0 1px 1px rgba(0,0,0,0.06)',
+                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
+                                            whiteSpace: 'pre-wrap',
                                         }}
                                     >
-                                        {m.content ?? ''}
+                                        {m.content}
                                     </div>
                                     {dt && (
                                         <div
@@ -473,16 +829,10 @@ export default function ChatBotMessagePage() {
                     borderTop: '1px solid #ddd',
                 }}
             >
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                    }}
-                >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <input
                         type="text"
-                        placeholder="질문을 입력하세요…"
+                        placeholder="질문을 입력 후 Enter"
                         value={text}
                         onChange={handleChange}
                         disabled={safeRoomId === null}
@@ -504,9 +854,7 @@ export default function ChatBotMessagePage() {
                             padding: '6px 14px',
                             fontSize: 13,
                             fontWeight: 600,
-                            backgroundColor: text.trim()
-                                ? '#222'
-                                : '#aaa',
+                            backgroundColor: text.trim() ? '#222' : '#aaa',
                             color: '#fff',
                             cursor: text.trim() ? 'pointer' : 'default',
                         }}
