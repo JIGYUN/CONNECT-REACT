@@ -77,7 +77,7 @@ export default function ChatBotRoomPage() {
                     marginBottom: 12,
                 }}
             >
-                <h2 style={{ margin: 0, fontSize: 20 }}>Qwen 챗봇 채팅방</h2>
+                <h2 style={{ margin: 0, fontSize: 20 }}>법률 챗봇 채팅방</h2>
                 <button
                     type="button"
                     className="btn btn-outline-secondary btn-sm"
