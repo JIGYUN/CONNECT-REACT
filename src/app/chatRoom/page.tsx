@@ -8,16 +8,21 @@ import {
     useChatRoomList,
     useCreateChatRoom,
     useDeleteChatRoom,
+    type ChatRoomEntry,
 } from '@/shared/chatRoom';
-import type { ChatRoomEntry } from '@/shared/chatRoom';
 
 const PAGE_MAX_WIDTH = 480;
+const NORMAL_ROOM_TYPE = 'NORMAL' as const;
 
 export default function ChatRoomPage() {
     const router = useRouter();
     const [roomNm, setRoomNm] = useState('');
 
-    const { data: rooms, isLoading, refetch } = useChatRoomList();
+    // ✅ 목록 조회 시 roomType=NORMAL 로 서버에 전달
+    const { data: rooms, isLoading, refetch } = useChatRoomList({
+        roomType: NORMAL_ROOM_TYPE,
+    });
+
     const createRoom = useCreateChatRoom();
     const deleteRoom = useDeleteChatRoom();
 
@@ -30,8 +35,15 @@ export default function ChatRoomPage() {
     const submitCreate = async () => {
         const nm = roomNm.trim();
         if (!nm || createRoom.isPending) return;
-        await createRoom.mutateAsync({ roomNm: nm });
+
+        // ✅ 생성 시 roomType=NORMAL 로 서버에 전달
+        await createRoom.mutateAsync({
+            roomNm: nm,
+            roomType: NORMAL_ROOM_TYPE,
+        });
+
         setRoomNm('');
+        void refetch();
     };
 
     const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -124,7 +136,6 @@ export default function ChatRoomPage() {
             {!isLoading &&
                 !isEmpty &&
                 list.map((r, idx) => {
-                    // id / ownerId 는 숫자만 온다고 가정하고 안전하게 정규화
                     let numericId: number | null = null;
                     if (typeof r.id === 'number' && Number.isFinite(r.id)) {
                         numericId = r.id;
@@ -137,10 +148,7 @@ export default function ChatRoomPage() {
 
                     const lastMsg = r.lastMsgContent ?? '';
                     const lastDt =
-                        r.lastMsgSentDt ??
-                        r.updatedDt ??
-                        r.createdDt ??
-                        '';
+                        r.lastMsgSentDt ?? r.updatedDt ?? r.createdDt ?? '';
 
                     const preview =
                         lastMsg.length > 40

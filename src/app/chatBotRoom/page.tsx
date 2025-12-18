@@ -12,12 +12,17 @@ import {
 } from '@/shared/chatRoom';
 
 const PAGE_MAX_WIDTH = 480;
+const BOT_ROOM_TYPE = 'BOT' as const;
 
 export default function ChatBotRoomPage() {
     const router = useRouter();
     const [roomNm, setRoomNm] = useState('');
 
-    const { data: rooms, isLoading, refetch } = useChatRoomList();
+    // ✅ 여기서 roomType=BOT 를 넘겨야 list 요청 바디에 들어간다
+    const { data: rooms, isLoading, refetch } = useChatRoomList({
+        roomType: BOT_ROOM_TYPE,
+    });
+
     const createRoom = useCreateChatRoom();
     const deleteRoom = useDeleteChatRoom();
 
@@ -30,7 +35,13 @@ export default function ChatBotRoomPage() {
     const submitCreate = async () => {
         const nm = roomNm.trim();
         if (!nm || createRoom.isPending) return;
-        await createRoom.mutateAsync({ roomNm: nm });
+
+        // ✅ 이제 꼼수 주입 말고 정식으로 보냄 (queries.ts가 roomType을 전송하도록 수정되어 있어야 함)
+        await createRoom.mutateAsync({
+            roomNm: nm,
+            roomType: BOT_ROOM_TYPE,
+        });
+
         setRoomNm('');
         void refetch();
     };
@@ -132,15 +143,13 @@ export default function ChatBotRoomPage() {
                         typeof r.ownerId === 'number' &&
                         Number.isFinite(r.ownerId)
                     ) {
+                        // (구조상 ownerId를 roomId로 쓰는 건 위험하지만, 기존 호환 때문에 유지)
                         numericId = r.ownerId;
                     }
 
                     const lastMsg = r.lastMsgContent ?? '';
                     const lastDt =
-                        r.lastMsgSentDt ??
-                        r.updatedDt ??
-                        r.createdDt ??
-                        '';
+                        r.lastMsgSentDt ?? r.updatedDt ?? r.createdDt ?? '';
 
                     const preview =
                         lastMsg.length > 40

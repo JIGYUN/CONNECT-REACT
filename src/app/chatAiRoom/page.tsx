@@ -1,27 +1,28 @@
 // filepath: src/app/chatAiRoom/page.tsx
 'use client';
 
-import {
-    useState,
-    type ChangeEvent,
-    type KeyboardEvent,
-} from 'react';
+import { useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import {
     useChatRoomList,
     useCreateChatRoom,
     useDeleteChatRoom,
+    type ChatRoomEntry,
 } from '@/shared/chatRoom';
-import type { ChatRoomEntry } from '@/shared/chatRoom';
 
 const PAGE_MAX_WIDTH = 480;
+const AI_ROOM_TYPE = 'AI' as const;
 
 export default function ChatAiRoomPage() {
     const router = useRouter();
     const [roomNm, setRoomNm] = useState('');
 
-    const { data: rooms, isLoading, refetch } = useChatRoomList();
+    // ✅ 목록 조회 시 roomType=AI로 필터링해서 서버에 전달
+    const { data: rooms, isLoading, refetch } = useChatRoomList({
+        roomType: AI_ROOM_TYPE,
+    });
+
     const createRoom = useCreateChatRoom();
     const deleteRoom = useDeleteChatRoom();
 
@@ -34,7 +35,13 @@ export default function ChatAiRoomPage() {
     const submitCreate = async () => {
         const nm = roomNm.trim();
         if (!nm || createRoom.isPending) return;
-        await createRoom.mutateAsync({ roomNm: nm });
+
+        // ✅ 생성 시 roomType=AI로 서버에 전달
+        await createRoom.mutateAsync({
+            roomNm: nm,
+            roomType: AI_ROOM_TYPE,
+        });
+
         setRoomNm('');
         void refetch();
     };

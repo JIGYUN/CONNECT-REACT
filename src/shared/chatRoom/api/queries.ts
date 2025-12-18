@@ -1,7 +1,15 @@
 // filepath: src/shared/chatRoom/api/queries.ts
-import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import {
+    useQuery,
+    useMutation,
+    useQueryClient,
+    type QueryKey,
+} from '@tanstack/react-query';
 import { postJson } from '@/shared/core/apiClient';
-import type { ChatRoomEntry, ChatRoomUpsertInput } from '@/shared/chatRoom/types';
+import type {
+    ChatRoomEntry,
+    ChatRoomUpsertInput,
+} from '@/shared/chatRoom/types';
 import { adaptInChatRoom } from '@/shared/chatRoom/adapters';
 
 const isRec = (v: unknown): v is Record<string, unknown> =>
@@ -10,6 +18,22 @@ const isRec = (v: unknown): v is Record<string, unknown> =>
 const normGrp = (g?: string | null) => (g && g.trim() ? g : null);
 const normOwner = (o?: number | null) =>
     typeof o === 'number' && Number.isFinite(o) ? o : null;
+
+const normRoomType = (t?: string | null) => {
+    if (!t) return null;
+    const s = t.trim();
+    if (!s) return null;
+    return s.toUpperCase();
+};
+
+function cleanObj<T extends Record<string, unknown>>(o: T): T {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v !== undefined) out[k] = v;
+    }
+    return out as T;
+}
 
 function keyChatRoomByDate(
     diaryDt: string,
@@ -187,29 +211,65 @@ export function useUpsertChatRoom(ctx: {
 
 /* === 채팅방 리스트/생성/삭제용 훅들 === */
 
-async function getChatRoomList(): Promise<ChatRoomEntry[]> {
-    const data = await postJson<unknown>(API.list, {});
+type ChatRoomListParams = {
+    roomType?: string | null;
+    grpCd?: string | null;
+    ownerId?: number | null;
+};
+
+async function getChatRoomList(p?: ChatRoomListParams): Promise<ChatRoomEntry[]> {
+    const roomType = normRoomType(p?.roomType ?? null);
+    const grpCd = normGrp(p?.grpCd ?? null);
+    const ownerId = normOwner(p?.ownerId ?? null);
+
+    const body = cleanObj({
+        roomType: roomType ?? undefined,
+        grpCd: grpCd ?? undefined,
+        ownerId: ownerId ?? undefined,
+    });
+
+    const data = await postJson<unknown>(API.list, body);
     return extractList(data);
 }
 
-export function useChatRoomList() {
+export function useChatRoomList(p?: ChatRoomListParams) {
+    const roomType = normRoomType(p?.roomType ?? null);
+    const grpCd = normGrp(p?.grpCd ?? null);
+    const ownerId = normOwner(p?.ownerId ?? null);
+
     return useQuery<ChatRoomEntry[], Error>({
-        queryKey: ['chatRoom/list'],
-        queryFn: () => getChatRoomList(),
+        queryKey: ['chatRoom/list', roomType, grpCd, ownerId],
+        queryFn: () => getChatRoomList({ roomType, grpCd, ownerId }),
         refetchOnWindowFocus: false,
         refetchOnReconnect: false,
         staleTime: 5000,
     });
 }
 
+type CreateChatRoomVars = {
+    roomNm: string;
+    roomType?: string | null;
+    grpCd?: string | null;
+    ownerId?: number | null;
+};
+
 export function useCreateChatRoom() {
     const qc = useQueryClient();
 
-    return useMutation<void, Error, { roomNm: string }>({
+    return useMutation<void, Error, CreateChatRoomVars>({
         mutationFn: async (vars) => {
-            const body: Record<string, unknown> = {
-                roomNm: vars.roomNm,
-            };
+            const roomNm = typeof vars.roomNm === 'string' ? vars.roomNm : '';
+            const roomType = normRoomType(vars.roomType ?? null);
+            const grpCd = normGrp(vars.grpCd ?? null);
+            const ownerId = normOwner(vars.ownerId ?? null);
+
+            const body = cleanObj({
+                roomNm,
+                roomType: roomType ?? undefined, // ✅ 여기서부터 실제로 서버로 감
+                grpCd: grpCd ?? undefined,
+                ownerId: ownerId ?? undefined,
+            });
+
             await postJson<unknown>(API.insert, body);
         },
         onSuccess: () => {
@@ -245,7 +305,9 @@ export type JoinChatRoomUserInput = {
 /**
  * ✅ 채팅방 입장 시 TB_CHAT_ROOM_USER upsert 호출
  */
-export async function joinChatRoomUser(input: JoinChatRoomUserInput): Promise<void> {
+export async function joinChatRoomUser(
+    input: JoinChatRoomUserInput,
+): Promise<void> {
     const body: Record<string, unknown> = {
         roomId: input.roomId,
         userId: input.userId,
