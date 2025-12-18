@@ -7,7 +7,6 @@ import {
     useRef,
     useState,
     useLayoutEffect,
-    type ChangeEvent,
     type FormEvent,
 } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -18,10 +17,7 @@ import type { ChatMessageEntry } from '@/shared/chatMessage';
 import { adaptInChatMessage } from '@/shared/chatMessage';
 import { useOwnerIdValue } from '@/shared/core/owner';
 import { postJson } from '@/shared/core/apiClient';
-import {
-    joinChatRoomUser,
-    type JoinChatRoomUserInput,
-} from '@/shared/chatRoom/api/queries';
+import { joinChatRoomUser } from '@/shared/chatRoom/api/queries';
 
 const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE ?? '';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
@@ -81,6 +77,40 @@ async function fetchMessageHistory(roomId: number): Promise<ChatMessageEntry[]> 
     return extractMessageList(data);
 }
 
+/**
+ * ✅ 핵심: “오래된 → 최신” 순으로 정렬해서 화면이 아래로 흐르게 만든다.
+ * - id(숫자)가 있으면 id 기준
+ * - 없으면 sentDt/createdDt 문자열 비교로 fallback
+ */
+function sortHistoryAsc(list: ChatMessageEntry[]): ChatMessageEntry[] {
+    const copy = list.slice();
+    copy.sort((a, b) => {
+        const aIdRaw = a.id;
+        const bIdRaw = b.id;
+
+        const aId =
+            typeof aIdRaw === 'number'
+                ? aIdRaw
+                : typeof aIdRaw === 'string'
+                  ? Number(aIdRaw)
+                  : Number.NaN;
+
+        const bId =
+            typeof bIdRaw === 'number'
+                ? bIdRaw
+                : typeof bIdRaw === 'string'
+                  ? Number(bIdRaw)
+                  : Number.NaN;
+
+        if (Number.isFinite(aId) && Number.isFinite(bId)) return aId - bId;
+
+        const aDt = String(a.sentDt ?? a.createdDt ?? '');
+        const bDt = String(b.sentDt ?? b.createdDt ?? '');
+        return aDt.localeCompare(bDt);
+    });
+    return copy;
+}
+
 function getEmailFromConnectSession(): string | null {
     if (typeof document === 'undefined') return null;
     const cookieStr = document.cookie;
@@ -97,7 +127,8 @@ function getEmailFromConnectSession(): string | null {
             const parsed = JSON.parse(decoded) as unknown;
             if (isRec(parsed)) {
                 const emailVal = parsed['email'];
-                if (typeof emailVal === 'string' && emailVal.trim() !== '') return emailVal;
+                if (typeof emailVal === 'string' && emailVal.trim() !== '')
+                    return emailVal;
             }
         } catch {
             return null;
@@ -187,7 +218,11 @@ type AiPatch = {
     dt?: string | null;
 };
 
-function upsertAiMessage(prev: ReadonlyArray<UiMessage>, aiMsgId: string, patch: AiPatch): UiMessage[] {
+function upsertAiMessage(
+    prev: ReadonlyArray<UiMessage>,
+    aiMsgId: string,
+    patch: AiPatch,
+): UiMessage[] {
     const idx = prev.findIndex((m) => m.aiMsgId === aiMsgId);
     const nowIso = new Date().toISOString();
     const dt = patch.dt ?? nowIso;
@@ -210,8 +245,13 @@ function upsertAiMessage(prev: ReadonlyArray<UiMessage>, aiMsgId: string, patch:
         return [...prev, created];
     }
 
-    const baseText = patch.setText !== undefined ? patch.setText : existing.content;
-    const mergedText = patch.appendText !== undefined ? `${baseText}${patch.appendText}` : baseText;
+    const baseText =
+        patch.setText !== undefined ? patch.setText : existing.content;
+    const mergedText =
+        patch.appendText !== undefined
+            ? `${baseText}${patch.appendText}`
+            : baseText;
+
     const merged: UiMessage = {
         key: existing.key,
         senderId: existing.senderId,
@@ -221,9 +261,11 @@ function upsertAiMessage(prev: ReadonlyArray<UiMessage>, aiMsgId: string, patch:
         createdDt: existing.createdDt ?? dt,
         updatedDt: dt,
         aiMsgId: existing.aiMsgId,
-        botVariant: patch.botVariant !== undefined ? patch.botVariant : existing.botVariant,
+        botVariant:
+            patch.botVariant !== undefined ? patch.botVariant : existing.botVariant,
         aiEvent: patch.aiEvent !== undefined ? patch.aiEvent : existing.aiEvent,
-        errorMsg: patch.errorMsg !== undefined ? patch.errorMsg : existing.errorMsg,
+        errorMsg:
+            patch.errorMsg !== undefined ? patch.errorMsg : existing.errorMsg,
     };
 
     const copy = prev.slice();
@@ -250,26 +292,31 @@ export default function ChatBotMessagePage() {
     const ownerId = useOwnerIdValue();
 
     const rawRoomId = searchParams.get('roomId');
-    const safeRoomId: number | null = rawRoomId ? Number(rawRoomId) : (rawRoomId === null ? 1 : null);
+    const safeRoomId: number | null = rawRoomId
+        ? Number(rawRoomId)
+        : rawRoomId === null
+          ? 1
+          : null;
 
     const [messages, setMessages] = useState<UiMessage[]>([]);
     const [text, setText] = useState('');
     const [connecting, setConnecting] = useState(false);
-    const [botVariant, setBotVariant] = useState<BotVariant>(DEFAULT_BOT_VARIANT);
+    const [botVariant, setBotVariant] =
+        useState<BotVariant>(DEFAULT_BOT_VARIANT);
     const [topK, setTopK] = useState<number>(DEFAULT_TOP_K);
 
     const clientRef = useRef<Client | null>(null);
     const listRef = useRef<HTMLDivElement | null>(null);
 
     const roomTitle = useMemo(
-        () => (safeRoomId !== null ? `OpenAI(FastAPI) 챗봇 방 #${safeRoomId}` : 'OpenAI(FastAPI) 챗봇 방'),
+        () =>
+            safeRoomId !== null
+                ? `OpenAI(FastAPI) 챗봇 방 #${safeRoomId}`
+                : 'OpenAI(FastAPI) 챗봇 방',
         [safeRoomId],
     );
 
-    // 초기 스크롤 및 설정 복원
-    useEffect(() => {
-        if (typeof window !== 'undefined') window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    }, []);
+    // ✅ (삭제) window.scrollTo(top:0) : 채팅 UX에선 역효과
 
     useEffect(() => {
         try {
@@ -278,7 +325,8 @@ export default function ChatBotMessagePage() {
             const k = localStorage.getItem('connect.chatBot.topK');
             if (k) {
                 const n = Number(k);
-                if (Number.isFinite(n)) setTopK(Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n)));
+                if (Number.isFinite(n))
+                    setTopK(Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n)));
             }
         } catch {}
     }, []);
@@ -299,14 +347,22 @@ export default function ChatBotMessagePage() {
 
         void (async () => {
             try {
-                await joinChatRoomUser({ roomId: safeRoomId, userId: ownerId, senderNm: senderEmail ?? null, roleCd: 'MEMBER' });
+                await joinChatRoomUser({
+                    roomId: safeRoomId,
+                    userId: ownerId,
+                    senderNm: senderEmail ?? null,
+                    roleCd: 'MEMBER',
+                });
             } catch {}
         })();
 
         void (async () => {
             try {
                 const history = await fetchMessageHistory(safeRoomId);
-                setMessages(history.map(toUiMessageFromEntry));
+
+                // ✅ 핵심: 항상 “오래된 → 최신”으로 정렬해서 렌더링
+                const ordered = sortHistoryAsc(history);
+                setMessages(ordered.map(toUiMessageFromEntry));
             } catch {}
         })();
 
@@ -321,38 +377,99 @@ export default function ChatBotMessagePage() {
                 const bodyStr = msg.body;
                 if (!bodyStr || bodyStr.trim() === '') return;
                 let parsed: unknown;
-                try { parsed = JSON.parse(bodyStr); } catch { return; }
+                try {
+                    parsed = JSON.parse(bodyStr);
+                } catch {
+                    return;
+                }
 
                 if (isRec(parsed)) {
                     const evRaw = parsed['aiEvent'];
                     if (typeof evRaw === 'string' && isAiEvent(evRaw)) {
-                        const aiMsgId = pickStr(parsed, 'aiMsgId') ?? `fallback-${cryptoRandomKey()}`;
+                        const aiMsgId =
+                            pickStr(parsed, 'aiMsgId') ??
+                            `fallback-${cryptoRandomKey()}`;
                         const bvRaw = pickStr(parsed, 'botVariant');
-                        const bv: BotVariant | null = bvRaw && isBotVariant(bvRaw) ? bvRaw : null;
-                        const dt = pickStr(parsed, 'sentDt') ?? pickStr(parsed, 'createdDt') ?? pickStr(parsed, 'updatedDt') ?? null;
-                        const delta = pickStr(parsed, 'delta') ?? pickStr(parsed, 'token') ?? pickStr(parsed, 'text') ?? '';
-                        let answer = pickStr(parsed, 'answer') ?? pickStr(parsed, 'content') ?? null;
-                        if (!answer && isRec(parsed['result'])) answer = pickStr(parsed['result'] as Record<string,unknown>, 'answer');
-                        const errorMsg = pickStr(parsed, 'errorMsg') ?? pickStr(parsed, 'message') ?? null;
+                        const bv: BotVariant | null =
+                            bvRaw && isBotVariant(bvRaw) ? bvRaw : null;
+                        const dt =
+                            pickStr(parsed, 'sentDt') ??
+                            pickStr(parsed, 'createdDt') ??
+                            pickStr(parsed, 'updatedDt') ??
+                            null;
+                        const delta =
+                            pickStr(parsed, 'delta') ??
+                            pickStr(parsed, 'token') ??
+                            pickStr(parsed, 'text') ??
+                            '';
+                        let answer =
+                            pickStr(parsed, 'answer') ??
+                            pickStr(parsed, 'content') ??
+                            null;
+                        if (!answer && isRec(parsed['result']))
+                            answer = pickStr(
+                                parsed['result'] as Record<string, unknown>,
+                                'answer',
+                            );
+                        const errorMsg =
+                            pickStr(parsed, 'errorMsg') ??
+                            pickStr(parsed, 'message') ??
+                            null;
 
                         if (evRaw === 'START') {
-                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'START', setText: '', dt }));
+                            setMessages((p) =>
+                                upsertAiMessage(p, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'START',
+                                    setText: '',
+                                    dt,
+                                }),
+                            );
                         } else if (evRaw === 'TOKEN') {
-                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'TOKEN', appendText: delta, dt }));
+                            setMessages((p) =>
+                                upsertAiMessage(p, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'TOKEN',
+                                    appendText: delta,
+                                    dt,
+                                }),
+                            );
                         } else if (evRaw === 'DONE') {
                             setMessages((p) => {
-                                const existing = p.find((m) => m.aiMsgId === aiMsgId);
-                                const finalText = (answer ?? '').trim() || (existing ? existing.content : '');
-                                return upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'DONE', setText: finalText, dt });
+                                const existing = p.find(
+                                    (m) => m.aiMsgId === aiMsgId,
+                                );
+                                const finalText =
+                                    (answer ?? '').trim() ||
+                                    (existing ? existing.content : '');
+                                return upsertAiMessage(p, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'DONE',
+                                    setText: finalText,
+                                    dt,
+                                });
                             });
                         } else if (evRaw === 'ERROR') {
-                            const msgText = (errorMsg ?? '').trim() || '오류 발생';
-                            setMessages((p) => upsertAiMessage(p, aiMsgId, { botVariant: bv, aiEvent: 'ERROR', errorMsg: msgText, setText: msgText, dt }));
+                            const msgText =
+                                (errorMsg ?? '').trim() || '오류 발생';
+                            setMessages((p) =>
+                                upsertAiMessage(p, aiMsgId, {
+                                    botVariant: bv,
+                                    aiEvent: 'ERROR',
+                                    errorMsg: msgText,
+                                    setText: msgText,
+                                    dt,
+                                }),
+                            );
                         }
                         return;
                     }
                 }
-                setMessages((p) => [...p, toUiMessageFromEntry(adaptInChatMessage(parsed))]);
+
+                setMessages((p) => [
+                    ...p,
+                    toUiMessageFromEntry(adaptInChatMessage(parsed)),
+                ]);
             });
         };
         client.onStompError = () => setConnecting(false);
@@ -395,29 +512,30 @@ export default function ChatBotMessagePage() {
             botVariant,
             topK,
         };
-        client.publish({ destination: `${SEND_PREFIX}${safeRoomId}`, body: JSON.stringify(payload) });
+        client.publish({
+            destination: `${SEND_PREFIX}${safeRoomId}`,
+            body: JSON.stringify(payload),
+        });
         setText('');
     };
 
     return (
         <div
             style={{
-                // ✅ 핵심 수정 1: 화면 전체를 강제로 차지하는 Fixed Position 사용
-                // 이렇게 하면 스크롤에 밀려 입력창이 안 보이는 현상을 막을 수 있습니다.
                 position: 'fixed',
-                top: 'var(--connect-app-header-h, 0px)', // 헤더 아래부터 시작
+                top: 'var(--connect-app-header-h, 0px)',
                 bottom: 0,
                 left: 0,
                 right: 0,
-                
+
                 margin: '0 auto',
                 maxWidth: PAGE_MAX_WIDTH,
                 backgroundColor: '#e5e5e5',
-                zIndex: 50, // 다른 요소 위에 표시
-                
+                zIndex: 50,
+
                 display: 'flex',
                 flexDirection: 'column',
-                overflow: 'hidden', // 전체 스크롤 방지
+                overflow: 'hidden',
             }}
         >
             {/* 상단 헤더 (높이 고정) */}
@@ -442,14 +560,33 @@ export default function ChatBotMessagePage() {
             </div>
 
             {/* 옵션 바 (높이 고정) */}
-            <div style={{ flexShrink: 0, padding: '10px 12px', backgroundColor: '#f7f7f7', borderBottom: '1px solid #ddd' }}>
+            <div
+                style={{
+                    flexShrink: 0,
+                    padding: '10px 12px',
+                    backgroundColor: '#f7f7f7',
+                    borderBottom: '1px solid #ddd',
+                }}
+            >
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <select
                         value={botVariant}
-                        onChange={(e) => isBotVariant(e.target.value) && setBotVariant(e.target.value)}
-                        style={{ flex: 1, borderRadius: 10, border: '1px solid #ccc', padding: '8px', fontSize: 13 }}
+                        onChange={(e) =>
+                            isBotVariant(e.target.value) && setBotVariant(e.target.value)
+                        }
+                        style={{
+                            flex: 1,
+                            borderRadius: 10,
+                            border: '1px solid #ccc',
+                            padding: '8px',
+                            fontSize: 13,
+                        }}
                     >
-                        {BOT_VARIANTS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+                        {BOT_VARIANTS.map((b) => (
+                            <option key={b.value} value={b.value}>
+                                {b.label}
+                            </option>
+                        ))}
                     </select>
                     <input
                         type="number"
@@ -457,24 +594,37 @@ export default function ChatBotMessagePage() {
                         max={TOP_K_MAX}
                         value={topK}
                         onChange={(e) => setTopK(Number(e.target.value))}
-                        style={{ width: 60, borderRadius: 10, border: '1px solid #ccc', padding: '8px', fontSize: 13 }}
+                        style={{
+                            width: 60,
+                            borderRadius: 10,
+                            border: '1px solid #ccc',
+                            padding: '8px',
+                            fontSize: 13,
+                        }}
                     />
                 </div>
             </div>
 
-            {/* 메시지 리스트 (나머지 공간 채움 & 내부 스크롤) */}
+            {/* 메시지 리스트 */}
             <div
                 ref={listRef}
                 style={{
-                    flex: 1, // 남은 높이를 모두 차지
-                    overflowY: 'auto', // 내용이 넘치면 스크롤
+                    flex: 1,
+                    overflowY: 'auto',
                     padding: '12px 10px',
                     backgroundColor: '#e5e5e5',
                     WebkitOverflowScrolling: 'touch',
                 }}
             >
                 {messages.length === 0 && (
-                    <div style={{ marginTop: 40, textAlign: 'center', fontSize: 13, color: '#777' }}>
+                    <div
+                        style={{
+                            marginTop: 40,
+                            textAlign: 'center',
+                            fontSize: 13,
+                            color: '#777',
+                        }}
+                    >
                         대화를 시작해보세요.
                     </div>
                 )}
@@ -482,21 +632,60 @@ export default function ChatBotMessagePage() {
                     const isMine = ownerId !== null && m.senderId === ownerId;
                     const sender = m.senderNm || `USER${m.senderId ?? ''}`;
                     return (
-                        <div key={m.key} style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+                        <div
+                            key={m.key}
+                            style={{
+                                display: 'flex',
+                                justifyContent: isMine ? 'flex-end' : 'flex-start',
+                                marginBottom: 8,
+                            }}
+                        >
                             {!isMine && (
                                 <div style={{ maxWidth: '80%' }}>
-                                    <div style={{ fontSize: 11, color: '#666', marginLeft: 4, marginBottom: 2 }}>
+                                    <div
+                                        style={{
+                                            fontSize: 11,
+                                            color: '#666',
+                                            marginLeft: 4,
+                                            marginBottom: 2,
+                                        }}
+                                    >
                                         {sender}
                                         {m.aiEvent && m.aiEvent !== 'DONE' && ` · ${m.aiEvent}`}
                                     </div>
-                                    <div style={{ display: 'inline-block', padding: '7px 11px', borderRadius: 16, borderTopLeftRadius: 0, backgroundColor: '#ffffff', fontSize: 14, lineHeight: 1.4, boxShadow: '0 1px 1px rgba(0,0,0,0.06)', whiteSpace: 'pre-wrap' }}>
+                                    <div
+                                        style={{
+                                            display: 'inline-block',
+                                            padding: '7px 11px',
+                                            borderRadius: 16,
+                                            borderTopLeftRadius: 0,
+                                            backgroundColor: '#ffffff',
+                                            fontSize: 14,
+                                            lineHeight: 1.4,
+                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
+                                            whiteSpace: 'pre-wrap',
+                                        }}
+                                    >
                                         {m.content}
                                     </div>
                                 </div>
                             )}
+
                             {isMine && (
                                 <div style={{ maxWidth: '80%', textAlign: 'right' }}>
-                                    <div style={{ display: 'inline-block', padding: '7px 11px', borderRadius: 16, borderTopRightRadius: 0, backgroundColor: '#ffe94a', fontSize: 14, lineHeight: 1.4, boxShadow: '0 1px 1px rgba(0,0,0,0.06)', whiteSpace: 'pre-wrap' }}>
+                                    <div
+                                        style={{
+                                            display: 'inline-block',
+                                            padding: '7px 11px',
+                                            borderRadius: 16,
+                                            borderTopRightRadius: 0,
+                                            backgroundColor: '#ffe94a',
+                                            fontSize: 14,
+                                            lineHeight: 1.4,
+                                            boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
+                                            whiteSpace: 'pre-wrap',
+                                        }}
+                                    >
                                         {m.content}
                                     </div>
                                 </div>
@@ -506,17 +695,14 @@ export default function ChatBotMessagePage() {
                 })}
             </div>
 
-            {/* 하단 입력창 (높이 고정) */}
+            {/* 하단 입력창 */}
             <form
                 onSubmit={handleSend}
                 style={{
-                    flexShrink: 0, // 찌그러짐 방지
+                    flexShrink: 0,
                     padding: '8px 10px',
                     backgroundColor: '#f7f7f7',
                     borderTop: '1px solid #ddd',
-                    
-                    // ✅ 핵심 수정 2: 안드로이드 네비게이션바/홈바 대응
-                    // 기본 패딩 10px + 안전 영역(네비게이션 바) 높이만큼 추가 패딩
                     paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
                 }}
             >
@@ -526,12 +712,27 @@ export default function ChatBotMessagePage() {
                         placeholder="메시지 입력..."
                         value={text}
                         onChange={(e) => setText(e.target.value)}
-                        style={{ flex: 1, borderRadius: 18, border: '1px solid #ccc', padding: '8px 12px', fontSize: 15, outline: 'none' }}
+                        style={{
+                            flex: 1,
+                            borderRadius: 18,
+                            border: '1px solid #ccc',
+                            padding: '8px 12px',
+                            fontSize: 15,
+                            outline: 'none',
+                        }}
                     />
                     <button
                         type="submit"
                         disabled={!text.trim()}
-                        style={{ border: 'none', borderRadius: 18, padding: '0 14px', backgroundColor: text.trim() ? '#222' : '#aaa', color: '#fff', fontWeight: 600, fontSize: 14 }}
+                        style={{
+                            border: 'none',
+                            borderRadius: 18,
+                            padding: '0 14px',
+                            backgroundColor: text.trim() ? '#222' : '#aaa',
+                            color: '#fff',
+                            fontWeight: 600,
+                            fontSize: 14,
+                        }}
                     >
                         전송
                     </button>
