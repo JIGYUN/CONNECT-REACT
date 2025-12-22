@@ -14,13 +14,11 @@ import { apiServerLogout, clearUserFcmToken, setUserFcmToken } from '@/shared/co
 /* ───────────────────────── 라우트 ───────────────────────── */
 const routes = {
     home: '/' as Route,
-    boardPost: '/boardPost' as Route,
     task: '/task' as Route,
     diary: '/diary' as Route,
     ledger: '/ledger' as Route,
     reservation: '/reservation' as Route,
     chatRoom: '/chatRoom' as Route,
-    chatAiRoom: '/chatAiRoom' as Route,
     chatBotRoom: '/chatBotRoom' as Route,
 } as const;
 
@@ -29,7 +27,7 @@ type SafeMe = { userId: number; email: string; name: string | null };
 
 function usernameFrom(me: SafeMe | null): string {
     if (me?.name && me.name.trim()) return me.name;
-    if (me?.email && me.email.includes('@')) return me.email.split('@')[0]!;
+    if (me?.email && me.email.includes('@')) return me.email.split('@')[0] ?? '게스트';
     if (me?.userId) return `USER#${me.userId}`;
     return '게스트';
 }
@@ -60,17 +58,12 @@ export default function NavMenu() {
     const [open, setOpen]: [boolean, Dispatch<SetStateAction<boolean>>] = useState(false);
     const [me, setMe]: [SafeMe | null, Dispatch<SetStateAction<SafeMe | null>>] = useState<SafeMe | null>(null);
 
-    // ownerId는 내부 상태 동기화 용도
     const ownerId = (useOwnerIdValue as () => number | null | undefined)();
-
-    // 동일 토큰 중복 작업 방지
     const lastTokenRef = useRef<string | null>(null);
 
-    // 키 상수
     const PENDING = 'pending_fcm_token';
     const LAST = 'last_fcm_token';
 
-    // 라우트 변동마다 세션 재동기화
     useEffect(() => {
         const s = getClientSession();
         if (s && typeof s.userId === 'number') {
@@ -99,7 +92,6 @@ export default function NavMenu() {
             const token = pickStr(msg, 'token');
             if (!token) return;
 
-            // 중복 alert 방지
             if (lastTokenRef.current !== token) {
                 lastTokenRef.current = token;
                 alert(`FCM TOKEN 수신:\n${token}`);
@@ -113,7 +105,6 @@ export default function NavMenu() {
 
         window.addEventListener('native', onNative as EventListener);
 
-        // WebView 환경이면 토큰 요청(페이지 진입 시 1회)
         try {
             const fn = getAndroidPostMessage();
             if (fn) {
@@ -140,12 +131,10 @@ export default function NavMenu() {
                 localStorage.setItem(LAST, pending);
                 localStorage.removeItem(PENDING);
                 void setUserFcmToken({
-                    userId: uid,                // ✅ TB_USER 키: userId
+                    userId: uid,
                     fcmToken: pending,
                     platformInfo: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-                }).catch(() => {
-                    // 실패해도 앱 흐름은 유지
-                });
+                }).catch(() => {});
             }
         } catch { /* ignore */ }
     }, [mounted, me?.userId, pathname]);
@@ -155,12 +144,8 @@ export default function NavMenu() {
 
     const logout = async () => {
         try { await apiServerLogout(); } catch { /* ignore */ }
-
-        // 정책: 한 계정 1기기 → 로그아웃 시 서버 토큰 해제(원치 않으면 이 블록 제거)
         try {
-            if (me?.userId) {
-                await clearUserFcmToken(me.userId);
-            }
+            if (me?.userId) await clearUserFcmToken(me.userId);
         } catch { /* ignore */ }
 
         clearClientSession();
@@ -174,24 +159,12 @@ export default function NavMenu() {
 
     return (
         <>
-            {/* 햄버거 버튼 */}
+            {/* ✅ 헤더 안에 들어가는 햄버거 (fixed 제거) */}
             <button
                 type="button"
                 aria-label="메뉴"
                 onClick={() => setOpen(true)}
                 className={`hamburger ${open ? 'is-open' : ''}`}
-                style={{
-                    position: 'fixed',
-                    top: 10,
-                    right: 12,
-                    zIndex: 60,
-                    width: 40,
-                    height: 40,
-                    borderRadius: 12,
-                    background: '#fff',
-                    border: '1px solid #e5e7eb',
-                    boxShadow: '0 2px 10px rgba(0,0,0,.06)',
-                }}
             >
                 <span />
                 <span />
@@ -229,13 +202,10 @@ export default function NavMenu() {
 
                     <div className="navmenu__actions">
                         {loggedIn ? (
-                            // ⬇⬇ 안드로이드 하단 네비에 가리지 않도록 "살짝 위로"
                             <button
                                 className="btn btn--outline"
                                 onClick={logout}
-                                style={{
-                                    marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)',
-                                }}
+                                style={{ marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}
                             >
                                 로그아웃
                             </button>
@@ -244,9 +214,7 @@ export default function NavMenu() {
                                 className="btn btn--outline"
                                 href={'/login' as Route}
                                 onClick={() => setOpen(false)}
-                                style={{
-                                    marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)',
-                                }}
+                                style={{ marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}
                             >
                                 로그인
                             </Link>

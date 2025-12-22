@@ -31,7 +31,14 @@ const API_SELECT_MESSAGE_LIST = '/api/cht/chatMessage/selectChatMessageList';
 
 const PAGE_MAX_WIDTH = 480;
 
-// 유틸리티 함수들
+// ✅ 전역 레이아웃(상단 헤더/하단 탭바) 오프셋
+// - globals.css에 var가 있으면 그걸 사용
+// - 없으면 fallback으로 --h(56), --tab(64) 또는 하드값 사용
+const APP_TOP = 'var(--connect-app-header-h, var(--h, 56px))';
+const APP_BOTTOM =
+    'calc(var(--connect-app-tab-h, var(--tab, 64px)) + env(safe-area-inset-bottom, 0px))';
+
+// 유틸리티
 const isRec = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null;
 
@@ -77,11 +84,7 @@ async function fetchMessageHistory(roomId: number): Promise<ChatMessageEntry[]> 
     return extractMessageList(data);
 }
 
-/**
- * ✅ 핵심: “오래된 → 최신” 순으로 정렬해서 화면이 아래로 흐르게 만든다.
- * - id(숫자)가 있으면 id 기준
- * - 없으면 sentDt/createdDt 문자열 비교로 fallback
- */
+/** 오래된→최신 정렬 */
 function sortHistoryAsc(list: ChatMessageEntry[]): ChatMessageEntry[] {
     const copy = list.slice();
     copy.sort((a, b) => {
@@ -316,8 +319,6 @@ export default function ChatBotMessagePage() {
         [safeRoomId],
     );
 
-    // ✅ (삭제) window.scrollTo(top:0) : 채팅 UX에선 역효과
-
     useEffect(() => {
         try {
             const v = localStorage.getItem('connect.chatBot.botVariant');
@@ -338,7 +339,6 @@ export default function ChatBotMessagePage() {
         } catch {}
     }, [botVariant, topK]);
 
-    // STOMP & 채팅방 로직
     useEffect(() => {
         if (safeRoomId === null) return;
         if (ownerId === null || ownerId === undefined) return;
@@ -359,8 +359,6 @@ export default function ChatBotMessagePage() {
         void (async () => {
             try {
                 const history = await fetchMessageHistory(safeRoomId);
-
-                // ✅ 핵심: 항상 “오래된 → 최신”으로 정렬해서 렌더링
                 const ordered = sortHistoryAsc(history);
                 setMessages(ordered.map(toUiMessageFromEntry));
             } catch {}
@@ -406,11 +404,12 @@ export default function ChatBotMessagePage() {
                             pickStr(parsed, 'answer') ??
                             pickStr(parsed, 'content') ??
                             null;
-                        if (!answer && isRec(parsed['result']))
+                        if (!answer && isRec(parsed['result'])) {
                             answer = pickStr(
                                 parsed['result'] as Record<string, unknown>,
                                 'answer',
                             );
+                        }
                         const errorMsg =
                             pickStr(parsed, 'errorMsg') ??
                             pickStr(parsed, 'message') ??
@@ -436,9 +435,7 @@ export default function ChatBotMessagePage() {
                             );
                         } else if (evRaw === 'DONE') {
                             setMessages((p) => {
-                                const existing = p.find(
-                                    (m) => m.aiMsgId === aiMsgId,
-                                );
+                                const existing = p.find((m) => m.aiMsgId === aiMsgId);
                                 const finalText =
                                     (answer ?? '').trim() ||
                                     (existing ? existing.content : '');
@@ -450,8 +447,7 @@ export default function ChatBotMessagePage() {
                                 });
                             });
                         } else if (evRaw === 'ERROR') {
-                            const msgText =
-                                (errorMsg ?? '').trim() || '오류 발생';
+                            const msgText = (errorMsg ?? '').trim() || '오류 발생';
                             setMessages((p) =>
                                 upsertAiMessage(p, aiMsgId, {
                                     botVariant: bv,
@@ -472,6 +468,7 @@ export default function ChatBotMessagePage() {
                 ]);
             });
         };
+
         client.onStompError = () => setConnecting(false);
         client.onWebSocketError = () => setConnecting(false);
         client.activate();
@@ -482,15 +479,17 @@ export default function ChatBotMessagePage() {
         };
     }, [safeRoomId, ownerId]);
 
-    // 스크롤 자동 이동
     const scrollSig = useMemo(() => {
         const last = messages[messages.length - 1];
-        return last ? `${last.key}:${last.content.length}:${last.aiEvent ?? ''}` : 'empty';
+        return last
+            ? `${last.key}:${last.content.length}:${last.aiEvent ?? ''}`
+            : 'empty';
     }, [messages]);
 
     useLayoutEffect(() => {
         requestAnimationFrame(() => {
-            if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+            if (!listRef.current) return;
+            listRef.current.scrollTop = listRef.current.scrollHeight;
         });
     }, [scrollSig]);
 
@@ -498,6 +497,7 @@ export default function ChatBotMessagePage() {
         e.preventDefault();
         const trimmed = text.trim();
         if (!trimmed || safeRoomId === null) return;
+
         const client = clientRef.current;
         if (!client || !client.connected) return;
 
@@ -512,10 +512,12 @@ export default function ChatBotMessagePage() {
             botVariant,
             topK,
         };
+
         client.publish({
             destination: `${SEND_PREFIX}${safeRoomId}`,
             body: JSON.stringify(payload),
         });
+
         setText('');
     };
 
@@ -523,8 +525,8 @@ export default function ChatBotMessagePage() {
         <div
             style={{
                 position: 'fixed',
-                top: 'var(--connect-app-header-h, 0px)',
-                bottom: 0,
+                top: APP_TOP,
+                bottom: APP_BOTTOM, // ✅ 탭바 + safe-area 만큼 위로 올림 (답변 짤림 방지)
                 left: 0,
                 right: 0,
 
@@ -538,7 +540,7 @@ export default function ChatBotMessagePage() {
                 overflow: 'hidden',
             }}
         >
-            {/* 상단 헤더 (높이 고정) */}
+            {/* 상단 헤더 */}
             <div
                 style={{
                     flexShrink: 0,
@@ -553,13 +555,17 @@ export default function ChatBotMessagePage() {
                 <div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>{roomTitle}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>
-                        {safeRoomId === null ? 'roomId 오류' : connecting ? '연결 중…' : '연결 완료'}
+                        {safeRoomId === null
+                            ? 'roomId 오류'
+                            : connecting
+                              ? '연결 중…'
+                              : '연결 완료'}
                     </div>
                 </div>
                 <div style={{ fontSize: 20 }}>🤖</div>
             </div>
 
-            {/* 옵션 바 (높이 고정) */}
+            {/* 옵션 바 */}
             <div
                 style={{
                     flexShrink: 0,
@@ -593,7 +599,11 @@ export default function ChatBotMessagePage() {
                         min={TOP_K_MIN}
                         max={TOP_K_MAX}
                         value={topK}
-                        onChange={(e) => setTopK(Number(e.target.value))}
+                        onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (!Number.isFinite(n)) return;
+                            setTopK(Math.min(TOP_K_MAX, Math.max(TOP_K_MIN, n)));
+                        }}
                         style={{
                             width: 60,
                             borderRadius: 10,
@@ -612,6 +622,7 @@ export default function ChatBotMessagePage() {
                     flex: 1,
                     overflowY: 'auto',
                     padding: '12px 10px',
+                    paddingBottom: 18, // ✅ 마지막 말풍선 여유
                     backgroundColor: '#e5e5e5',
                     WebkitOverflowScrolling: 'touch',
                 }}
@@ -628,9 +639,11 @@ export default function ChatBotMessagePage() {
                         대화를 시작해보세요.
                     </div>
                 )}
+
                 {messages.map((m) => {
                     const isMine = ownerId !== null && m.senderId === ownerId;
                     const sender = m.senderNm || `USER${m.senderId ?? ''}`;
+
                     return (
                         <div
                             key={m.key}
@@ -695,7 +708,7 @@ export default function ChatBotMessagePage() {
                 })}
             </div>
 
-            {/* 하단 입력창 */}
+            {/* ✅ 하단 입력창: fixed 제거 (flex 흐름 안으로 넣어서 답변이 안 가려짐) */}
             <form
                 onSubmit={handleSend}
                 style={{
@@ -703,7 +716,6 @@ export default function ChatBotMessagePage() {
                     padding: '8px 10px',
                     backgroundColor: '#f7f7f7',
                     borderTop: '1px solid #ddd',
-                    paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
                 }}
             >
                 <div style={{ display: 'flex', gap: 8 }}>

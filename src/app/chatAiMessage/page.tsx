@@ -13,6 +13,7 @@ import {
 import { useSearchParams } from 'next/navigation';
 import { Client, type IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
+
 import type { ChatMessageEntry } from '@/shared/chatMessage';
 import { adaptInChatMessage } from '@/shared/chatMessage';
 import { useOwnerIdValue } from '@/shared/core/owner';
@@ -33,6 +34,11 @@ const SEND_PREFIX = '/app/chat-ai/';
 const API_SELECT_MESSAGE_LIST = '/api/cht/chatMessage/selectChatMessageList';
 
 const PAGE_MAX_WIDTH = 480;
+
+// ✅ 전역 레이아웃(상단 헤더/하단 탭바) 오프셋
+// - CSS 변수 없으면 56/64px fallback
+const APP_TOP = 'var(--connect-app-header-h, var(--h, 56px))';
+const APP_BOTTOM = 'var(--connect-app-bottom-nav-h, 64px)';
 
 // Qwen 고정, 대상 언어 선택용 타입
 type TargetLang = 'ko' | 'en' | 'ja' | 'zh-CN';
@@ -72,9 +78,7 @@ function extractMessageList(v: unknown): ChatMessageEntry[] {
     return [];
 }
 
-async function fetchMessageHistory(
-    roomId: number,
-): Promise<ChatMessageEntry[]> {
+async function fetchMessageHistory(roomId: number): Promise<ChatMessageEntry[]> {
     const payload: Record<string, unknown> = { roomId, limit: 50 };
     const data = await postJson<unknown>(API_SELECT_MESSAGE_LIST, payload);
     return extractMessageList(data);
@@ -127,8 +131,7 @@ function getEmailFromConnectSession(): string | null {
 
 function createStompClient(): Client {
     const client = new Client({
-        webSocketFactory: () =>
-            new SockJS(WS_ENDPOINT) as unknown as WebSocket,
+        webSocketFactory: () => new SockJS(WS_ENDPOINT) as unknown as WebSocket,
         reconnectDelay: 5000,
     });
     return client;
@@ -308,27 +311,29 @@ export default function ChatAiMessagePage() {
     return (
         <div
             style={{
-                // ✅ 핵심: 화면 전체를 강제로 차지하는 Fixed Position Layout
-                // 이 방식이 모바일 브라우저 주소창 변화 등에 가장 견고합니다.
+                // ✅ 핵심 수정:
+                // - top: 전역 헤더 높이만큼 내림
+                // - bottom: 하단 메뉴 높이만큼 올림 (메시지/입력창/마지막 답변 안 잘림)
                 position: 'fixed',
-                top: 0,
-                bottom: 0,
+                top: APP_TOP,
+                bottom: APP_BOTTOM,
                 left: 0,
                 right: 0,
+
                 maxWidth: PAGE_MAX_WIDTH,
                 margin: '0 auto',
-                
+
                 backgroundColor: '#e5e5e5',
                 display: 'flex',
                 flexDirection: 'column',
-                overflow: 'hidden', // 전체 스크롤 방지
+                overflow: 'hidden',
                 zIndex: 50,
             }}
         >
             {/* 헤더 + 대상 언어 선택 (높이 고정) */}
             <div
                 style={{
-                    flexShrink: 0, // 높이 축소 방지
+                    flexShrink: 0,
                     padding: '8px 12px',
                     borderBottom: '1px solid #ddd',
                     backgroundColor: '#f7f7f7',
@@ -360,8 +365,8 @@ export default function ChatAiMessagePage() {
                             {safeRoomId === null
                                 ? 'roomId 오류'
                                 : connecting
-                                ? '연결 중…'
-                                : '연결 완료'}
+                                  ? '연결 중…'
+                                  : '연결 완료'}
                         </div>
                     </div>
                     <div
@@ -385,9 +390,7 @@ export default function ChatAiMessagePage() {
                             대상 언어
                             <select
                                 value={targetLang}
-                                onChange={(
-                                    ev: ChangeEvent<HTMLSelectElement>,
-                                ) => {
+                                onChange={(ev: ChangeEvent<HTMLSelectElement>) => {
                                     const v = ev.target.value as TargetLang;
                                     if (
                                         v === 'ko' ||
@@ -419,11 +422,14 @@ export default function ChatAiMessagePage() {
             <div
                 ref={listRef}
                 style={{
-                    flex: 1, // 남은 공간 모두 차지
+                    flex: 1,
                     padding: '12px 10px 8px',
-                    overflowY: 'auto', // 내부 스크롤
+                    overflowY: 'auto',
                     backgroundColor: '#e5e5e5',
                     WebkitOverflowScrolling: 'touch',
+
+                    // ✅ 마지막 메시지가 입력폼에 너무 붙지 않게 여유
+                    paddingBottom: 16,
                 }}
             >
                 {messages.length === 0 && (
@@ -440,8 +446,7 @@ export default function ChatAiMessagePage() {
                 )}
 
                 {messages.map((m) => {
-                    const id =
-                        m.id ?? m.createdDt ?? Math.random().toString(36);
+                    const id = m.id ?? m.createdDt ?? Math.random().toString(36);
                     const isMine =
                         ownerId !== null &&
                         ownerId !== undefined &&
@@ -452,62 +457,47 @@ export default function ChatAiMessagePage() {
                             ? m.senderNm
                             : `USER${m.senderId ?? ''}`;
 
-                    const dt =
-                        m.sentDt ?? m.updatedDt ?? m.createdDt ?? '';
+                    const dt = m.sentDt ?? m.updatedDt ?? m.createdDt ?? '';
 
                     // translatedText
                     let translated: string | null = null;
                     {
-                        const raw: unknown = (m as {
-                            translatedText?: unknown;
-                        }).translatedText;
+                        const raw: unknown = (m as { translatedText?: unknown })
+                            .translatedText;
                         if (typeof raw === 'string') {
-                            const trimmed = raw.trim();
-                            if (trimmed !== '') {
-                                translated = trimmed;
-                            }
+                            const t = raw.trim();
+                            if (t !== '') translated = t;
                         }
                     }
 
                     // translateErrorMsg
                     let translateError: string | null = null;
                     {
-                        const raw: unknown = (m as {
-                            translateErrorMsg?: unknown;
-                        }).translateErrorMsg;
+                        const raw: unknown = (m as { translateErrorMsg?: unknown })
+                            .translateErrorMsg;
                         if (typeof raw === 'string') {
-                            const trimmed = raw.trim();
-                            if (trimmed !== '') {
-                                translateError = trimmed;
-                            }
+                            const t = raw.trim();
+                            if (t !== '') translateError = t;
                         }
                     }
 
                     // engine
                     let engineUsed: string | null = null;
                     {
-                        const raw: unknown = (m as {
-                            engine?: unknown;
-                        }).engine;
+                        const raw: unknown = (m as { engine?: unknown }).engine;
                         if (typeof raw === 'string') {
-                            const trimmed = raw.trim();
-                            if (trimmed !== '') {
-                                engineUsed = trimmed;
-                            }
+                            const t = raw.trim();
+                            if (t !== '') engineUsed = t;
                         }
                     }
 
                     // targetLang
                     let targetLangUsedDisplay: string | null = null;
                     {
-                        const raw: unknown = (m as {
-                            targetLang?: unknown;
-                        }).targetLang;
+                        const raw: unknown = (m as { targetLang?: unknown }).targetLang;
                         if (typeof raw === 'string') {
-                            const trimmed = raw.trim();
-                            if (trimmed !== '') {
-                                targetLangUsedDisplay = trimmed;
-                            }
+                            const t = raw.trim();
+                            if (t !== '') targetLangUsedDisplay = t;
                         }
                     }
 
@@ -516,9 +506,7 @@ export default function ChatAiMessagePage() {
                             key={String(id)}
                             style={{
                                 display: 'flex',
-                                justifyContent: isMine
-                                    ? 'flex-end'
-                                    : 'flex-start',
+                                justifyContent: isMine ? 'flex-end' : 'flex-start',
                                 marginBottom: 8,
                             }}
                         >
@@ -544,6 +532,7 @@ export default function ChatAiMessagePage() {
                                         ? ` · target: ${targetLangUsedDisplay}`
                                         : ''}
                                 </div>
+
                                 <div
                                     style={{
                                         display: 'inline-block',
@@ -551,13 +540,11 @@ export default function ChatAiMessagePage() {
                                         borderRadius: 16,
                                         borderTopRightRadius: isMine ? 0 : 16,
                                         borderTopLeftRadius: isMine ? 16 : 0,
-                                        backgroundColor: isMine
-                                            ? '#ffe94a'
-                                            : '#ffffff',
+                                        backgroundColor: isMine ? '#ffe94a' : '#ffffff',
                                         fontSize: 14,
                                         lineHeight: 1.4,
-                                        boxShadow:
-                                            '0 1px 1px rgba(0,0,0,0.06)',
+                                        boxShadow: '0 1px 1px rgba(0,0,0,0.06)',
+                                        whiteSpace: 'pre-wrap',
                                     }}
                                 >
                                     {m.content ?? ''}
@@ -571,6 +558,7 @@ export default function ChatAiMessagePage() {
                                             marginTop: 3,
                                             marginLeft: isMine ? 0 : 4,
                                             marginRight: isMine ? 4 : 0,
+                                            whiteSpace: 'pre-wrap',
                                         }}
                                     >
                                         {translated}
@@ -585,6 +573,7 @@ export default function ChatAiMessagePage() {
                                             marginTop: 3,
                                             marginLeft: isMine ? 0 : 4,
                                             marginRight: isMine ? 4 : 0,
+                                            whiteSpace: 'pre-wrap',
                                         }}
                                     >
                                         번역 실패: {translateError}
@@ -596,17 +585,16 @@ export default function ChatAiMessagePage() {
                 })}
             </div>
 
-            {/* 하단 입력창 (높이 고정 + Safe Area) */}
+            {/* 하단 입력창 */}
             <form
                 onSubmit={handleSend}
                 style={{
-                    flexShrink: 0, // 높이 축소 방지
+                    flexShrink: 0,
                     padding: '8px 10px',
                     backgroundColor: '#f7f7f7',
                     borderTop: '1px solid #ddd',
-                    
-                    // ✅ 핵심: 안드로이드 네비게이션바 & 아이폰 홈 바 대응
-                    // 기본 패딩 10px + Safe Area 만큼의 공간 확보
+
+                    // ✅ safe-area만 처리 (탭바 높이는 래퍼 bottom에서 이미 처리)
                     paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
                 }}
             >
@@ -641,9 +629,7 @@ export default function ChatAiMessagePage() {
                             padding: '6px 14px',
                             fontSize: 13,
                             fontWeight: 600,
-                            backgroundColor: text.trim()
-                                ? '#222'
-                                : '#aaa',
+                            backgroundColor: text.trim() ? '#222' : '#aaa',
                             color: '#fff',
                             cursor: text.trim() ? 'pointer' : 'default',
                             whiteSpace: 'nowrap',
