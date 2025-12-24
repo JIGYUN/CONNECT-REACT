@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 const tabs = [
     { href: '/' as Route, label: '홈', icon: '🏠' },
     { href: '/task' as Route, label: '작업', icon: '✅' },
-    { href: '/diary' as Route, label: '기록', icon: '📝' },
+    { href: '/shop/products' as Route, label: '쇼핑몰', icon: '🛒' }, // ✅ 기록 → 쇼핑몰
     { href: '/chatRoom' as Route, label: '채팅', icon: '💬' },
     { href: '/chatBotRoom' as Route, label: 'AI', icon: '🤖' },
 ] as const;

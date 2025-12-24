@@ -95,21 +95,6 @@ export default function ShopProductListPage() {
 
             <div className="d-flex justify-content-between align-items-center">
                 <h2 className="page-title">쇼핑몰 상품</h2>
-                <div className="toolbar">
-                    <button
-                        className="btn btn-outline-secondary"
-                        type="button"
-                        onClick={() => void refetch()}
-                    >
-                        새로고침
-                    </button>
-                    <a className="btn btn-primary" href="/prd/product/productModify">
-                        상품 등록
-                    </a>
-                    <a className="btn btn-outline-secondary" href="/prd/product/product">
-                        통합
-                    </a>
-                </div>
             </div>
 
             {isLoading && (

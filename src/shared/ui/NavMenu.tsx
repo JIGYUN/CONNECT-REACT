@@ -20,6 +20,7 @@ const routes = {
     reservation: '/reservation' as Route,
     chatRoom: '/chatRoom' as Route,
     chatBotRoom: '/chatBotRoom' as Route,
+    products: '/shop/products' as Route,
 } as const;
 
 /* ───────────────────────── 유틸 ───────────────────────── */
@@ -192,12 +193,14 @@ export default function NavMenu() {
                     <hr className="navmenu__divider" />
 
                     <nav className="navmenu__nav" onClick={() => setOpen(false)}>
+                        <Link href={routes.products}><span className="mi">•</span> 쇼핑몰</Link>
+                        <Link href={routes.chatBotRoom}><span className="mi">•</span> 챗봇</Link>
                         <Link href={routes.task}><span className="mi">•</span> 작업</Link>
                         <Link href={routes.diary}><span className="mi">•</span> 다이어리</Link>
                         <Link href={routes.ledger}><span className="mi">•</span> 가계부</Link>
                         <Link href={routes.reservation}><span className="mi">•</span> 예약</Link>
                         <Link href={routes.chatRoom}><span className="mi">•</span> 채팅방</Link>
-                        <Link href={routes.chatBotRoom}><span className="mi">•</span> 챗봇</Link>
+                        
                     </nav>
 
                     <div className="navmenu__actions">
