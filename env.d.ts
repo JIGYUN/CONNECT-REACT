@@ -2,6 +2,7 @@
 declare namespace NodeJS {
     interface ProcessEnv {
         NEXT_PUBLIC_API_BASE?: string;
+        NEXT_PUBLIC_TOSS_CLIENT_KEY?: string;
         NEXT_PUBLIC_GRP_CD?: string;
         NEXT_PUBLIC_USE_ENVELOPE?: 'true' | 'false';
         NEXT_PUBLIC_FAKE_OWNER_ID?: string;

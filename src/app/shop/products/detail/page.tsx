@@ -9,6 +9,9 @@ const NO_IMAGE_URL = '/static/img/no-image-600x400.png';
 const CART_LIST_URL = '/crt/cart/cartList';
 const LOGIN_URL = '/mba/auth/login';
 
+// ✅ 신규 주문 화면 라우트(Next)
+const ORDER_PAGE_URL = '/shop/order';
+
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_BASE ?? '').trim();
 
 const toAbsUrl = (u: string) => {
@@ -142,12 +145,13 @@ export default function ShopProductDetailPage() {
             return;
         }
 
+        // ✅ 신규 주문 화면으로 이동
         if (r.cartItemId === null) {
-            window.location.href = '/ord/order/orderModify';
+            window.location.href = ORDER_PAGE_URL;
             return;
         }
 
-        window.location.href = `/ord/order/orderModify?cartIds=${encodeURIComponent(
+        window.location.href = `${ORDER_PAGE_URL}?cartIds=${encodeURIComponent(
             String(r.cartItemId),
         )}`;
     };
